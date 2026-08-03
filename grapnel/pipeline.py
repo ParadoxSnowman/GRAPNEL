@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import numpy as np
+
 from . import cables, detect, dossier, outages
 from .config import Config
 from .sources.base import empty_positions, empty_static
@@ -103,6 +105,100 @@ def load_archive(cfg: Config, since: dt.datetime) -> tuple[pd.DataFrame, pd.Data
     return positions.reset_index(drop=True), static.reset_index(drop=True)
 
 
+def _iso(x) -> str:
+    return pd.Timestamp(x).tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def latest_positions(positions: pd.DataFrame) -> pd.DataFrame:
+    """Most recent fix per MMSI."""
+    if positions.empty:
+        return positions
+    return positions.sort_values("ts").groupby("mmsi", as_index=False).last()
+
+
+def build_vessel_layer(positions: pd.DataFrame, static: pd.DataFrame, index, routes) -> tuple[dict, list]:
+    """Current position of every vessel seen, plus who is sitting in a corridor.
+
+    This exists because a live AIS feed returns ONE fix per vessel per poll and
+    every detector needs a track. On a fresh deployment there is no track yet,
+    so a detections-only map is blank for hours and looks broken. It is not
+    broken - it has nothing to say yet - but a blank map is indistinguishable
+    from a failure, so the map shows what is actually out there while the
+    archive fills.
+
+    The corridor watchlist is the genuinely useful part on day one: "which hulls
+    are over a cable right now" needs no history at all, and it is the same
+    question a duty watch officer would ask. It is also the part most open to
+    misreading, which is why the payload carries its own base-rate warning.
+    """
+    latest = latest_positions(positions)
+    if latest.empty:
+        return {"type": "FeatureCollection", "features": []}, []
+
+    meta_by_mmsi: dict[int, dict] = {}
+    if not static.empty:
+        for r in static.dropna(subset=["mmsi"]).itertuples():
+            cur = meta_by_mmsi.setdefault(int(r.mmsi), {})
+            for k in ("name", "ship_type", "imo", "destination", "callsign"):
+                v = getattr(r, k, None)
+                if v is not None and str(v) not in ("", "nan", "<NA>", "None") and not cur.get(k):
+                    cur[k] = str(v)
+
+    # Nearest-route distance for every vessel at once: one vectorised pass per
+    # route rather than one per vessel, which matters at a few thousand hulls.
+    lats = latest["lat"].to_numpy(dtype="float64")
+    lons = latest["lon"].to_numpy(dtype="float64")
+    best_d = np.full(len(latest), np.inf)
+    best_r = np.full(len(latest), -1, dtype=int)
+    for ridx in range(len(routes)):
+        d = index.distance_m(ridx, lats, lons)
+        closer = d < best_d
+        best_d[closer] = d[closer]
+        best_r[closer] = ridx
+
+    feats, watch = [], []
+    for i, r in enumerate(latest.itertuples()):
+        mmsi = int(r.mmsi)
+        meta = meta_by_mmsi.get(mmsi, {})
+        hits = index.hits(float(r.lon), float(r.lat))
+        nearest = routes[best_r[i]].name if best_r[i] >= 0 else None
+
+        props = {
+            "mmsi": mmsi,
+            "name": meta.get("name"),
+            "ship_type": meta.get("ship_type"),
+            "sog": None if pd.isna(r.sog) else round(float(r.sog), 1),
+            "cog": None if pd.isna(r.cog) else round(float(r.cog), 1),
+            "nav_status": None if pd.isna(r.nav_status) else str(r.nav_status),
+            "ts": _iso(r.ts),
+            "in_corridor": bool(hits),
+            "nearest_cable": nearest,
+            "nearest_m": int(best_d[i]) if np.isfinite(best_d[i]) else None,
+        }
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [round(float(r.lon), 5), round(float(r.lat), 5)]},
+            "properties": props,
+        })
+
+        if hits:
+            watch.append({
+                **props,
+                "cables": sorted({routes[j].name for j in hits}),
+                "cable_positional_class": sorted({routes[j].positional_class for j in hits}),
+                "imo": meta.get("imo"),
+                "callsign": meta.get("callsign"),
+                "destination": meta.get("destination"),
+                "lat": round(float(r.lat), 5),
+                "lon": round(float(r.lon), 5),
+                "vessel": dossier.build(mmsi, static, positions, lat=float(r.lat), lon=float(r.lon)),
+            })
+
+    # Slowest first: a stopped hull over a cable is the one worth a look.
+    watch.sort(key=lambda w: (w["sog"] if w["sog"] is not None else 99, w["nearest_m"] or 0))
+    return {"type": "FeatureCollection", "features": feats}, watch
+
+
 def publish(cfg: Config, routes, detections, faults, positions, static, window_start, window_end) -> None:
     """Write everything the static site reads. No server, no database."""
     out = Path(cfg.site_data_dir)
@@ -137,6 +233,22 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
         encoding="utf-8",
     )
 
+    # --- live vessels and corridor watchlist -------------------------------
+    index = detect.CorridorIndex(routes, cfg.thresholds.corridor_m)
+    vessel_layer, watchlist = build_vessel_layer(positions, static, index, routes)
+    (out / "vessels.geojson").write_text(json.dumps(vessel_layer, separators=(",", ":")), encoding="utf-8")
+    (out / "watchlist.json").write_text(
+        json.dumps({
+            "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "count": len(watchlist),
+            "note": ("Vessels whose most recent fix falls inside a cable corridor. Presence is "
+                     "not behaviour and carries no implication whatsoever: cable routes run "
+                     "through shipping lanes, anchorages and fishing grounds, so on a busy day "
+                     "this list is mostly ordinary traffic going about its business."),
+            "vessels": watchlist[:200],
+        }, separators=(",", ":")),
+        encoding="utf-8")
+
     # --- detections with dossiers attached ---------------------------------
     detections = detections[: cfg.max_detections_published]
     for d in detections:
@@ -156,6 +268,7 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
                     "positions_observed": int(len(positions)),
                     "routes": len(routes),
                     "routes_charted": sum(1 for r in routes if r.positional_class == cables.CHARTED),
+                    "in_corridor_now": len(watchlist),
                 },
                 "thresholds": vars(cfg.thresholds),
                 "detections": [d.to_dict() for d in detections],
@@ -175,7 +288,8 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
     if inc_path.exists():
         (out / "incidents.json").write_text(inc_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    log.info("published %d detections to %s", len(detections), out)
+    log.info("published %d detections, %d live vessels, %d in corridor -> %s",
+             len(detections), len(vessel_layer["features"]), len(watchlist), out)
 
 
 def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = None) -> int:
@@ -208,7 +322,28 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
     positions, static = load_archive(cfg, window_start)
     if positions.empty:
         positions, static = fresh_p, fresh_s
-    log.info("detecting over %d positions from %d vessels", len(positions), positions["mmsi"].nunique() if not positions.empty else 0)
+    n_vessels = positions["mmsi"].nunique() if not positions.empty else 0
+    per_vessel = (len(positions) / n_vessels) if n_vessels else 0
+    log.info("detecting over %d positions from %d vessels (%.1f fixes each)", len(positions), n_vessels, per_vessel)
+    if per_vessel < 3:
+        log.warning(
+            "Only %.1f fixes per vessel in this window. Detectors need a track, not a snapshot, "
+            "so expect few or no detections until the archive fills - roughly %d more polls at "
+            "the current cadence. The live vessel layer and corridor watchlist work immediately. "
+            "Run scripts/bootstrap.py against the DMA archive for detections from real history now.",
+            per_vessel, max(0, int(6 - per_vessel)))
+
+    if positions.empty:
+        # A run that saw nothing at all is almost always a transport failure,
+        # not an empty sea. Publishing it would wipe a working map and make the
+        # outage look like a quiet day, so keep the previous payload and fail
+        # loudly instead.
+        prev = Path(cfg.site_data_dir) / "detections.json"
+        if prev.exists():
+            log.error("no positions from any source; keeping the previously published payload")
+            return 2
+        log.error("no positions from any source and nothing previously published")
+        return 2
 
     dets = detect.run(positions, routes, cfg.thresholds)
     dets = detect.flag_repeat_presence(dets)

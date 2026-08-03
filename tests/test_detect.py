@@ -157,3 +157,31 @@ def test_imo_check_digit():
     assert validate_imo("9074720")["valid"] is False    # fails checksum
     assert validate_imo("907472")["valid"] is False     # wrong length
     assert validate_imo("")["present"] is False
+
+
+# ------------------------------------------------------- source field schema
+
+def test_digitraffic_timestamp_units():
+    """Location timestamps are SECONDS, metadata timestamps are MILLISECONDS.
+
+    Fintraffic call this out explicitly because it bites everyone. Mixing them
+    puts fixes in 1970 or 54000 AD and every duration the detectors compute
+    silently becomes garbage, with no error anywhere.
+    """
+    from grapnel.sources.digitraffic import _timestamp
+    assert _timestamp({"time": 1668075025}).year == 2022          # seconds
+    assert _timestamp({"timestamp": 1668075026035}).year == 2022  # milliseconds
+    assert _timestamp({"timestampExternal": 1668075026035}).year == 2022
+    assert _timestamp({}) is None
+
+
+def test_digitraffic_dimensions_and_sentinels():
+    from grapnel.sources.digitraffic import _dim, _ship_type, _sog
+    # Length is refA+refB, beam is refC+refD. There is no "length" field.
+    assert _dim({"refA": 160, "refB": 33}, "refA", "refB") == 193.0
+    assert _dim({"refC": 20, "refD": 12}, "refC", "refD") == 32.0
+    assert _ship_type(70) == "Cargo"
+    assert _ship_type(80) == "Tanker"
+    # 102.3 kn is the AIS "speed not available" sentinel, not a speed.
+    assert _sog(102.3) is None
+    assert _sog(10.7) == 10.7

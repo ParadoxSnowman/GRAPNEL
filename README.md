@@ -30,6 +30,24 @@ What GRAPNEL observes is the threat that has actually been materialising in the 
 
 Detections are then **corroborated** against independently observed faults — operator notices, ENTSO-E interconnector capacity drops, IODA and RIPE Atlas connectivity signals. This join is the point of the project. A slow corridor transit alone is background noise; the same transit inside the window of a fault observed by an instrument that has no idea any vessel was present is a finding.
 
+## Why a fresh deployment shows no detections (and what to do)
+
+A live AIS feed returns **one fix per vessel per poll**. Every detector needs a track, so a single poll can never produce a detection no matter how much traffic is out there. At the default 30-minute cadence a vessel has a usable track after roughly three hours in the area. This is correct behaviour and it looks exactly like a broken tool, so the map does not rely on detections to have something to show:
+
+- **Live vessel layer.** Every hull currently observed, dimmed grey, magenta if it is inside a corridor, orange if it is inside a corridor and under 2 knots. Populated on the first run.
+- **In-corridor watchlist.** Which hulls are over a cable *right now*, slowest first, each with a full dossier. Needs no history at all, and it is the same question a duty watch officer would ask.
+- **Precedent library.** Eleven sourced cases, available before any data exists.
+
+For real detections immediately, backfill from the Danish archive instead of waiting:
+
+```bash
+python scripts/bootstrap.py --days 2
+```
+
+DMA publish complete daily archives back to 2006, free and keyless. One day gives dense multi-hour tracks for thousands of hulls — enough to exercise every detector on real vessels. Mind the coverage mismatch: **DMA covers Danish waters and the western Baltic, not the Gulf of Finland**, so bootstrap with the southern Baltic box (the default in that script — Bornholm through Öland and Gotland, where C-Lion1 and the Sweden–Lithuania interconnects run) and switch back to the Gulf of Finland for live watching.
+
+Presence in a corridor is **not** behaviour and implies nothing. Cable routes run through shipping lanes, anchorages and fishing grounds, so on a busy day the watchlist is mostly ordinary traffic. The payload carries that warning in its own JSON so it travels with the data.
+
 ## The vessel dossier
 
 Clicking a detection opens everything the hull broadcast about itself, unedited and copyable, plus every pivot needed to test those claims against sources that are not AIS: MarineTraffic, Equasis, IMO GISIS, ITU MARS, Paris MoU, OpenSanctions, OFAC, Copernicus Browser for Sentinel-1 SAR, IODA.
@@ -65,6 +83,7 @@ Free ENC sources: NOAA (US), Traficom (FI), DMA (DK), Sjöfartsverket (SE), Tran
 | Layer | Source | Terms |
 |---|---|---|
 | Live AIS (Finnish waters) | Digitraffic `meri.digitraffic.fi` | CC BY 4.0, no key |
+| Bootstrap history | DMA daily archives | free, keyless, back to 2006 |
 | Historical AIS (Danish waters) | DMA `web.ais.dk/aisdata` | Danish PSI act, free, back to 2006 |
 | Cable display layer | TeleGeography v3 API | CC BY-NC-SA 3.0 |
 | Cable charted layer | National hydrographic offices | varies |
@@ -83,7 +102,8 @@ git clone https://github.com/YOURNAME/grapnel && cd grapnel
 pip install -r requirements.txt
 
 python scripts/make_demo.py        # synthetic data, exercises every detector
-python -m grapnel.pipeline -v      # real run against the live feed
+python scripts/bootstrap.py        # real detections from the DMA archive
+python -m grapnel.pipeline -v      # live feed: vessels now, detections as history builds
 python -m pytest tests/            # regression suite
 
 cd docs && python -m http.server 8000
@@ -91,7 +111,9 @@ cd docs && python -m http.server 8000
 
 Then open `http://localhost:8000`. Same files that Pages serves.
 
-The demo generates fabricated vessels on fabricated cables and stamps the payload so the UI shouts about it. Delete `docs/data/` before publishing anything real.
+The demo generates fabricated vessels on fabricated cables — including 48 background hulls, because a demo showing only detections teaches the wrong base rate — and stamps the payload so the UI shouts about it. Delete `docs/data/` before publishing anything real.
+
+A run that returns zero positions from every source keeps the previously published payload and exits non-zero, rather than wiping a working map and making a transport failure look like a quiet day.
 
 ## Deploying to GitHub Pages
 

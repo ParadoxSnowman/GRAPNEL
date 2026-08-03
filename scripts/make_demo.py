@@ -122,7 +122,25 @@ def build_positions():
     t = NOW - dt.timedelta(hours=12)
     rows += leg(m, t, interp((24.30, 59.70), (26.90, 60.20), 40), 5, 13.5, jitter_deg=2.5)
 
-    # 6) POSITION JUMP. Two positions 240 km apart, ten minutes.
+    # 6) BACKGROUND TRAFFIC. Ordinary hulls scattered across the area, some of
+    #    which happen to sit inside a corridor right now. This is what the map
+    #    actually looks like in service: mostly unremarkable, and the watchlist
+    #    is mostly innocent. A demo showing only detections teaches the wrong
+    #    base rate.
+    for k in range(48):
+        mm = 970200000 + k
+        lon0 = 24.2 + random.random() * 2.6
+        lat0 = 59.5 + random.random() * 0.9
+        brg = random.random() * 2 * math.pi
+        span = 0.18 + random.random() * 0.25
+        pts = interp((lon0, lat0), (lon0 + span * math.sin(brg), lat0 + span * math.cos(brg) * 0.5), 9)
+        rows += leg(mm, NOW - dt.timedelta(hours=3), pts, 12,
+                    random.choice([0.2, 0.6, 5.5, 9.0, 11.0, 12.5, 13.0, 14.5]),
+                    jitter_deg=3.0,
+                    nav=random.choice(["Under way using engine", "Under way using engine",
+                                       "At anchor", "Moored", "Engaged in fishing"]))
+
+    # 7) POSITION JUMP. Two positions 240 km apart, ten minutes.
     m = 970100006
     t = NOW - dt.timedelta(hours=8)
     rows += leg(m, t, interp((24.80, 59.90), (24.83, 59.91), 4), 10, 6.0, jitter_deg=4.0)
@@ -145,6 +163,28 @@ DEMO_STATIC = [
 ]
 
 
+BG_NAMES = ["NORDKAP", "SUOMI STAR", "BALTIC TRADER", "VIRE", "KALLAVESI", "AURORA LINE",
+           "PORVOO", "SAIMAA", "HANKO EXPRESS", "MERIKARHU", "TALLINK VOYAGER", "OSTSEE",
+           "KOTKA BAY", "LOVIISA", "VAASA CARRIER", "PELLINKI"]
+BG_TYPES = ["Cargo", "Tanker", "Passenger", "Other"]
+
+
+def build_background_static():
+    rows = []
+    for k in range(48):
+        rows.append({
+            "mmsi": 970200000 + k,
+            "imo": None, "callsign": f"DM{k:03d}",
+            "name": f"DEMO {BG_NAMES[k % len(BG_NAMES)]}",
+            "ship_type": BG_TYPES[k % len(BG_TYPES)], "cargo_type": None,
+            "length": 90 + (k * 7) % 140, "width": 14 + (k * 3) % 18,
+            "draught": round(4 + (k % 9) * 0.6, 1),
+            "destination": ["HELSINKI", "TALLINN", "KOTKA", "ST PETERSBURG", "RIGA"][k % 5],
+            "eta": None, "source": "demo",
+        })
+    return rows
+
+
 def build_static():
     rows = [{
         "mmsi": m, "imo": imo or None, "callsign": cs, "name": nm, "ship_type": st,
@@ -153,6 +193,7 @@ def build_static():
     } for m, imo, cs, nm, st, ln, wd, dr, dest in DEMO_STATIC]
     # Give one hull a second reported name so identity churn has something to catch.
     rows.append(dict(rows[3], name="DEMO VESSEL DELTA-2", callsign="DEMO4B"))
+    rows += build_background_static()
     return conform(pd.DataFrame(rows), STATIC_COLUMNS)
 
 
@@ -197,8 +238,11 @@ def main():
     by_kind = {}
     for d in dets:
         by_kind[d.kind] = by_kind.get(d.kind, 0) + 1
+    wl = json.loads((Path(cfg.site_data_dir) / "watchlist.json").read_text())
+    vl = json.loads((Path(cfg.site_data_dir) / "vessels.geojson").read_text())
     print(f"positions   {len(positions)}")
-    print(f"vessels     {positions['mmsi'].nunique()}")
+    print(f"vessels     {positions['mmsi'].nunique()}  (map layer: {len(vl['features'])})")
+    print(f"in corridor {wl['count']}")
     print(f"detections  {len(dets)}  {by_kind}")
     for d in dets:
         print(f"  [{d.confidence:8}] {d.kind:16} mmsi={d.mmsi} score={d.score:5.3f} {d.summary[:74]}")

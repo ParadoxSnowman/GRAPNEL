@@ -12,7 +12,7 @@
  */
 
 const DATA = 'data/';
-const state = { detections: [], incidents: [], view: 'det', kinds: new Set(), conf: new Set(), selected: null };
+const state = { detections: [], incidents: [], watchlist: [], view: 'det', kinds: new Set(), conf: new Set(), selected: null };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -55,7 +55,7 @@ map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-right'
 const empty = { type: 'FeatureCollection', features: [] };
 
 map.on('load', async () => {
-  for (const id of ['corridors', 'cables', 'detections', 'incidents', 'track']) {
+  for (const id of ['corridors', 'cables', 'vessels', 'detections', 'incidents', 'track']) {
     map.addSource(id, { type: 'geojson', data: empty });
   }
 
@@ -74,6 +74,21 @@ map.on('load', async () => {
       'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.8, 10, 2.2],
       'line-dasharray': ['case', ['==', ['get', 'positional_class'], 'CHARTED'], ['literal', [1]], ['literal', [3, 2]]],
       'line-opacity': 0.85,
+    },
+  });
+
+  // Live traffic. Drawn beneath everything else and kept deliberately quiet:
+  // it is context, not signal. Hulls currently inside a corridor get the chart
+  // magenta so you can see the watchlist without reading it.
+  map.addLayer({
+    id: 'vessel-dot', type: 'circle', source: 'vessels',
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 1.6, 9, 3.2, 12, 5],
+      'circle-color': ['case',
+        ['all', ['get', 'in_corridor'], ['<', ['coalesce', ['get', 'sog'], 99], 2]], '#ff6b4a',
+        ['get', 'in_corridor'], '#e85aa0',
+        '#4e6675'],
+      'circle-opacity': ['case', ['get', 'in_corridor'], 0.95, 0.5],
     },
   });
 
@@ -107,6 +122,23 @@ map.on('load', async () => {
     },
   });
 
+  map.on('click', 'vessel-dot', (e) => {
+    const p = e.features[0].properties;
+    new maplibregl.Popup({ closeButton: false, offset: 8 })
+      .setLngLat(e.lngLat)
+      .setHTML(
+        `<b>${esc(p.name || 'Unnamed')}</b><br>`
+        + `MMSI ${esc(p.mmsi)}${p.ship_type ? ` · ${esc(p.ship_type)}` : ''}<br>`
+        + `${p.sog != null ? esc(p.sog) + ' kn' : 'speed not reported'}`
+        + `${p.nav_status ? ' · ' + esc(p.nav_status) : ''}<br>`
+        + (p.in_corridor === true || p.in_corridor === 'true'
+          ? `<span style="color:#e85aa0">In corridor: ${esc(p.nearest_cable || '')}</span>`
+          : `${esc(p.nearest_m)} m from ${esc(p.nearest_cable || 'nearest route')}`))
+      .addTo(map);
+  });
+  map.on('mouseenter', 'vessel-dot', () => (map.getCanvas().style.cursor = 'pointer'));
+  map.on('mouseleave', 'vessel-dot', () => (map.getCanvas().style.cursor = ''));
+
   map.on('click', 'detection-dot', (e) => select(e.features[0].properties.id));
   map.on('click', 'incident-dot', (e) => showIncident(e.features[0].properties.id));
   for (const l of ['detection-dot', 'incident-dot']) {
@@ -136,13 +168,17 @@ async function getJSON(name) {
 }
 
 async function load() {
-  const [dets, cables, corridors, incidents] = await Promise.all([
+  const [dets, cables, corridors, incidents, vessels, watch] = await Promise.all([
     getJSON('detections.json'), getJSON('cables.geojson'),
     getJSON('corridors.geojson'), getJSON('incidents.json'),
+    getJSON('vessels.geojson'), getJSON('watchlist.json'),
   ]);
 
   if (cables) map.getSource('cables').setData(cables);
   if (corridors) map.getSource('corridors').setData(corridors);
+  if (vessels) map.getSource('vessels').setData(vessels);
+  state.watchlist = (watch && watch.vessels) || [];
+  state.watchNote = (watch && watch.note) || '';
 
   state.incidents = (incidents && incidents.incidents) || [];
   map.getSource('incidents').setData({
@@ -212,6 +248,7 @@ function renderStats(d) {
   $('stats').innerHTML =
     cell('Detections', c.detections ?? 0)
     + cell('Vessels seen', c.vessels_observed ?? 0)
+    + cell('In corridor', c.in_corridor_now ?? state.watchlist.length)
     + cell('Routes', `${c.routes_charted ?? 0}/${c.routes ?? 0}`)
     + cell('Updated', (d.generated_at || '').replace('T', ' ').replace('Z', 'Z'));
 }
@@ -241,6 +278,7 @@ function renderFilters() {
 function renderList() {
   const list = $('list');
   if (state.view === 'inc') return renderIncidentList();
+  if (state.view === 'watch') return renderWatchlist();
 
   const items = visible();
   if (!items.length) {
@@ -270,6 +308,56 @@ function renderList() {
   });
 }
 
+function renderWatchlist() {
+  const list = $('list');
+  if (!state.watchlist.length) {
+    list.innerHTML = '<div class="empty">No vessels currently inside a cable corridor.</div>';
+    return;
+  }
+  list.innerHTML = `<div class="empty" style="padding:11px 14px;font-size:11.5px">${esc(state.watchNote)}</div>`
+    + state.watchlist.map((w) => `
+    <article class="card" data-watch="${esc(w.mmsi)}" tabindex="0">
+      <div class="card-top">
+        <span class="kind" style="color:${(w.sog != null && w.sog < 2) ? '#ff6b4a' : '#e85aa0'}">
+          ${w.sog != null ? esc(w.sog) + ' kn' : 'speed n/r'}</span>
+        <span class="conf LOW">${esc(w.nearest_m)} m</span>
+      </div>
+      <div class="card-name">${esc(w.name || 'Unnamed')}</div>
+      <div class="card-sub">${esc(w.mmsi)}${w.ship_type ? ' · ' + esc(w.ship_type) : ''} · ${esc((w.cables || []).join(', '))}</div>
+      <div class="card-summary">${esc(w.nav_status || '')}${w.destination ? ' → ' + esc(w.destination) : ''}</div>
+    </article>`).join('');
+
+  list.querySelectorAll('.card').forEach((el) => {
+    el.onclick = () => showWatch(el.dataset.watch);
+    el.onkeydown = (e) => { if (e.key === 'Enter') showWatch(el.dataset.watch); };
+  });
+}
+
+function showWatch(mmsi) {
+  const w = state.watchlist.find((x) => String(x.mmsi) === String(mmsi));
+  if (!w) return;
+  map.getSource('track').setData(empty);
+  map.flyTo({ center: [w.lon, w.lat], zoom: 11 });
+  // Reuse the detection dossier: same hull, same questions, no detection yet.
+  renderDossier({
+    detection_id: '', kind: 'corridor_presence', mmsi: w.mmsi,
+    cable_name: (w.cables || []).join(', '),
+    cable_positional_class: (w.cable_positional_class || [])[0] || '',
+    confidence: 'LOW', score: 0,
+    start_ts: w.ts, end_ts: w.ts, lat: w.lat, lon: w.lon,
+    summary: 'Most recent fix falls inside a cable corridor. Presence only — no behavioural '
+      + 'detection has fired for this hull. Cable routes run through shipping lanes, anchorages '
+      + 'and fishing grounds, so this is very often ordinary traffic.',
+    evidence: {
+      speed_over_ground_kn: w.sog, nav_status: w.nav_status,
+      distance_to_nearest_route_m: w.nearest_m, nearest_route: w.nearest_cable,
+      corridors_occupied: w.cables, position_time: w.ts,
+    },
+    vessel: w.vessel || {}, corroboration: [], track: [],
+  });
+  openPanel();
+}
+
 function renderIncidentList() {
   $('list').innerHTML = state.incidents.map((i) => `
     <article class="card" data-inc="${esc(i.id)}" tabindex="0">
@@ -288,11 +376,11 @@ function renderIncidentList() {
   });
 }
 
-for (const [id, view] of [['tab-det', 'det'], ['tab-inc', 'inc']]) {
+const TABS = [['tab-det', 'det'], ['tab-watch', 'watch'], ['tab-inc', 'inc']];
+for (const [id, view] of TABS) {
   $(id).onclick = () => {
     state.view = view;
-    $('tab-det').setAttribute('aria-selected', String(view === 'det'));
-    $('tab-inc').setAttribute('aria-selected', String(view === 'inc'));
+    for (const [tid, tv] of TABS) $(tid).setAttribute('aria-selected', String(tv === view));
     $('filters').style.display = view === 'det' ? '' : 'none';
     renderList();
   };
@@ -359,6 +447,7 @@ function renderDossier(d) {
   const imo = v.imo_check || {};
 
   $('d-title').textContent = sr.name || 'Unnamed vessel';
+  state.selected = d.detection_id || null;
   $('d-mmsi').textContent = `MMSI ${d.mmsi}${sr.imo ? ` · IMO ${sr.imo}` : ''}`;
 
   const groups = {};
