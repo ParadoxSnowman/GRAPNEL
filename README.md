@@ -89,9 +89,28 @@ python -m pytest tests/            # regression suite
 cd docs && python -m http.server 8000
 ```
 
+Then open `http://localhost:8000`. Same files that Pages serves.
+
 The demo generates fabricated vessels on fabricated cables and stamps the payload so the UI shouts about it. Delete `docs/data/` before publishing anything real.
 
-`.github/workflows/monitor.yml` polls every 30 minutes, accumulates a Parquet archive in the Actions cache, and commits published detections. `pages.yml` deploys `docs/`. Digitraffic serves current positions only, so **the archive you accumulate is exactly as dense as your polling interval** — everything before you started polling has to come from DMA.
+## Deploying to GitHub Pages
+
+The site is plain static files — no build step, no framework, no server. `docs/` is the site root.
+
+1. Push the repo to GitHub. It must be **public** for free Actions minutes on a schedule.
+2. **Settings → Pages → Source: `GitHub Actions`.** Not "Deploy from a branch" — branch mode serves whatever is committed and ignores the artifact the workflow uploads, so your data would freeze at whatever you last pushed by hand.
+3. **Actions → monitor → Run workflow** to seed it. The schedule alone can take up to an hour to fire the first time.
+4. Live at `https://YOURNAME.github.io/grapnel/`.
+
+Everything is relative-path, so the `/grapnel/` subpath works with no config.
+
+`monitor.yml` runs every 30 minutes: restores the AIS archive from the Actions cache, polls the feed, detects, writes `docs/data/`, then uploads and deploys `docs/` as the Pages artifact. Each run writes a summary table of detections to the Actions run page, so you can triage from the Actions tab without opening the site.
+
+**Why one workflow and not two.** The obvious design is a monitor job that commits data plus a Pages job triggered on push. It does not work: a push made with `GITHUB_TOKEN` does not trigger other workflows, because GitHub blocks that to prevent recursion. The site would deploy once, then go stale forever while every run still reported green. Deploying inline is the only arrangement that stays live.
+
+**Commits.** The 30-minute runs commit nothing — publishing happens through the Pages artifact, so the repo does not accumulate 48 commits a day. A single daily run additionally writes `history/YYYY-MM-DD.json` and commits it. Every published payload is a public claim about real, named vessels, so there needs to be a record of what was asserted and when; one snapshot a day gives you that without drowning the history.
+
+**The archive is the fragile part.** Digitraffic serves current positions only, so **the archive is exactly as dense as your polling interval** and anything not captured is gone permanently. It lives in the Actions cache, which GitHub evicts LRU past 10 GB and drops entirely after 7 days without access — fine while the schedule runs, fatal if you disable the workflow for a week. If you need durable history, back the archive with a `data` orphan branch or an S3/R2 bucket instead. Everything before you started polling has to come from DMA.
 
 ## Tuning
 

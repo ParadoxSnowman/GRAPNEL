@@ -121,7 +121,12 @@ map.on('load', async () => {
 
 async function getJSON(name) {
   try {
-    const r = await fetch(DATA + name, { cache: 'no-store' });
+    // GitHub Pages sits behind a CDN that purges on deploy, but a client that
+    // left the tab open can still hold a stale copy for the cache lifetime.
+    // A minute-resolution buster keeps a long-lived tab honest without
+    // defeating caching for every asset on the page.
+    const bust = Math.floor(Date.now() / 60000);
+    const r = await fetch(`${DATA}${name}?v=${bust}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(r.status);
     return await r.json();
   } catch (err) {
@@ -150,10 +155,17 @@ async function load() {
   });
 
   if (!dets) {
-    $('list').innerHTML = '<div class="empty">No detection data yet.<br><br>'
-      + 'Run <code>python -m grapnel.pipeline</code> to build <code>docs/data/</code>, '
-      + 'or <code>python scripts/make_demo.py</code> for synthetic data that exercises every detector.</div>';
+    $('list').innerHTML = '<div class="empty">No detections published yet.<br><br>'
+      + 'If you are running this locally, build the data first:<br><br>'
+      + '<code>python scripts/make_demo.py</code> for synthetic data that exercises every detector, '
+      + 'or <code>python -m grapnel.pipeline</code> against the live feed.<br><br>'
+      + 'If this is the deployed site, the monitor workflow has not completed a successful run.</div>';
     renderStats(null);
+    if (state.incidents.length) {
+      state.view = 'inc';
+      $('tab-inc').setAttribute('aria-selected', 'true');
+      $('tab-det').setAttribute('aria-selected', 'false');
+    }
     return;
   }
 

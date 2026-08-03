@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GRAPNEL — subsea cable threat monitoring</title>
 <meta name="description" content="Open-source AIS monitoring for anomalous vessel behaviour over submarine cable corridors. Observations with evidence, not accusations.">
+<meta property="og:title" content="GRAPNEL">
+<meta property="og:description" content="Anomalous vessel behaviour over submarine cable corridors. Observations with evidence, not accusations.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="color-scheme" content="dark">
+<!-- Inline favicon: a grapnel in chart magenta, the colour an ENC uses for
+     submarine cables. No extra request, no binary in the repo. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23070c12'/%3E%3Cg stroke='%23e85aa0' stroke-width='2.4' fill='none' stroke-linecap='round'%3E%3Cpath d='M16 5v18'/%3E%3Cpath d='M11 8h10'/%3E%3Cpath d='M16 23c-4 0-7-3-7-6'/%3E%3Cpath d='M16 23c4 0 7-3 7-6'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
@@ -37,6 +45,14 @@
     </aside>
 
     <div id="map">
+      <noscript>
+        <div class="empty" style="position:absolute;z-index:5;max-width:34em">
+          GRAPNEL renders detections on an interactive map and needs JavaScript.
+          The underlying data is plain JSON and readable without it:
+          <code>data/detections.json</code>, <code>data/incidents.json</code>,
+          <code>data/cables.geojson</code>.
+        </div>
+      </noscript>
       <div class="legend">
         <div><span class="swatch" style="background:#e85aa0"></span> Cable route</div>
         <div><span class="swatch" style="background:#4fd1a5"></span> Charted geometry</div>
