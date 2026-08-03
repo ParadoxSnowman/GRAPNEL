@@ -1,0 +1,244 @@
+{
+  "_readme": [
+    "Curated library of publicly reported subsea infrastructure incidents.",
+    "",
+    "Purpose is calibration, not accusation. A detection means nothing until a reader can",
+    "compare it against cases whose outcomes are known - including the cases that were",
+    "investigated and closed as accidents, and the cases where a vessel was boarded and",
+    "released. Those are deliberately over-represented here. A tool that only shows you",
+    "confirmed sabotage teaches you to see sabotage everywhere.",
+    "",
+    "Coordinates are APPROXIMATE unless marked otherwise. They are derived from press",
+    "reporting, not from official incident positions, and are good to roughly 10-30 km.",
+    "They are adequate for placing a marker on a map and inadequate for anything else.",
+    "",
+    "'status' uses: CHARGED, CONVICTED, DETAINED, INVESTIGATING, RELEASED_NO_EVIDENCE,",
+    "RULED_ACCIDENTAL, UNATTRIBUTED, ADMITTED_ACCIDENTAL.",
+    "",
+    "Adding a case: append an object, run `python -m grapnel.publish`, open a PR. Every",
+    "claim needs at least one source URL. Claims sourced only to social media are rejected."
+  ],
+  "incidents": [
+    {
+      "id": "balticconnector-2023",
+      "date": "2023-10-08",
+      "title": "Balticconnector pipeline and EE-S1 telecom cable, Gulf of Finland",
+      "lat": 60.0,
+      "lon": 25.7,
+      "coord_quality": "approximate",
+      "sea_area": "Gulf of Finland",
+      "assets": ["Balticconnector gas pipeline (FI-EE)", "EE-S1 telecom cable (EE-FI)"],
+      "vessel": "Newnew Polar Bear",
+      "vessel_flag": "Hong Kong",
+      "mechanism": "Anchor drag; anchor recovered from the seabed",
+      "status": "ADMITTED_ACCIDENTAL",
+      "outcome": "China acknowledged after several months that the vessel was responsible and characterised the damage as accidental.",
+      "why_it_matters": "First case in the Baltic series to be physically confirmed by recovering the ground tackle. Establishes the anchor-drag mechanism that every later case is compared against.",
+      "sources": [
+        {"label": "NBC News - suspicion falls on Russian and Chinese vessels", "url": "https://www.nbcnews.com/news/world/undersea-cables-are-cut-suspicion-falls-russian-chinese-vessels-rcna187105"},
+        {"label": "Bulletin of the Atomic Scientists - Seabed zero", "url": "https://thebulletin.org/2026/02/seabed-zero-baltic-sabotage-and-the-global-risks-to-undersea-infrastructure/"}
+      ]
+    },
+    {
+      "id": "matsu-2023",
+      "date": "2023-02-02",
+      "title": "Taiwan-Matsu Islands cables severed",
+      "lat": 26.15,
+      "lon": 119.95,
+      "coord_quality": "approximate",
+      "sea_area": "Taiwan Strait",
+      "assets": ["Taiwan-Matsu No. 2", "Taiwan-Matsu No. 3"],
+      "vessel": "Chinese fishing vessel and freighter (not individually identified in public reporting)",
+      "vessel_flag": "China",
+      "mechanism": "Not established publicly",
+      "status": "UNATTRIBUTED",
+      "outcome": "Roughly 14,000 residents lost internet for weeks. Taiwanese authorities named Chinese vessels but stopped short of calling it deliberate.",
+      "why_it_matters": "Shows the second-order cost: small island communities have no redundancy, so a cable cut is a total outage rather than a latency increase.",
+      "sources": [
+        {"label": "NBC News", "url": "https://www.nbcnews.com/news/world/undersea-cables-are-cut-suspicion-falls-russian-chinese-vessels-rcna187105"},
+        {"label": "CNN - Taiwan detains Chinese-crewed ship", "url": "https://www.cnn.com/2025/02/25/asia/taiwan-detains-ship-undersea-cable-intl-hnk"}
+      ]
+    },
+    {
+      "id": "yipeng3-2024",
+      "date": "2024-11-17",
+      "title": "C-Lion1 and BCS East-West Interlink cut near Oland and Gotland",
+      "lat": 55.5,
+      "lon": 17.3,
+      "coord_quality": "approximate",
+      "sea_area": "Baltic Sea",
+      "assets": ["C-Lion1 (FI-DE)", "BCS East-West Interlink (SE-LT)"],
+      "vessel": "Yi Peng 3",
+      "vessel_flag": "China",
+      "mechanism": "Anchor dragged approximately 300 km across both cable routes",
+      "status": "INVESTIGATING",
+      "outcome": "Vessel shadowed and later allowed to depart. No prosecution reported.",
+      "why_it_matters": "The canonical drag signature: a sustained, straight, sub-transit-speed track across two separate routes. This is the behaviour the anchor_drag detector is tuned against.",
+      "sources": [
+        {"label": "The Register", "url": "https://www.theregister.com/2026/01/02/finnish_cops_interviewing_fitburg_crew"},
+        {"label": "Bulletin of the Atomic Scientists", "url": "https://thebulletin.org/2026/02/seabed-zero-baltic-sabotage-and-the-global-risks-to-undersea-infrastructure/"}
+      ]
+    },
+    {
+      "id": "yantar-irish-sea-2024",
+      "date": "2024-11-15",
+      "title": "Yantar operating over cables and pipelines in the Irish Sea",
+      "lat": 53.5,
+      "lon": -5.2,
+      "coord_quality": "approximate",
+      "sea_area": "Irish Sea",
+      "assets": ["Multiple telecom and power cables east of Dublin and south-west of the Isle of Man"],
+      "vessel": "Yantar",
+      "vessel_flag": "Russian Federation",
+      "mechanism": "Survey and loitering. No damage attributed.",
+      "status": "UNATTRIBUTED",
+      "outcome": "Escorted out of the Irish EEZ by the Irish military; separately shadowed by the Royal Navy on other transits.",
+      "why_it_matters": "The case that shows the limit of this tool. Yantar is operated by Russia's Main Directorate of Deep Sea Research and is assessed to be a mothership for deep-diving submersibles. Whatever those submersibles do is invisible to AIS. The surface track is the only observable, and a survey track is not evidence of a tap.",
+      "sources": [
+        {"label": "Data Center Dynamics - Irish military escorts Yantar", "url": "https://www.datacenterdynamics.com/en/news/irish-military-escorts-russian-spy-ship-away-from-subsea-cables/"},
+        {"label": "Silobreaker - threats to seabed infrastructure", "url": "https://www.silobreaker.com/blog/geopolitical/threats-to-the-seabed-infrastructure-around-the-world/"}
+      ]
+    },
+    {
+      "id": "estlink2-2024",
+      "date": "2024-12-25",
+      "title": "Estlink 2 power cable and four telecom cables, Gulf of Finland",
+      "lat": 60.15,
+      "lon": 26.35,
+      "coord_quality": "approximate",
+      "sea_area": "Gulf of Finland",
+      "assets": ["Estlink 2 (FI-EE HVDC)", "Four telecom cables"],
+      "vessel": "Eagle S",
+      "vessel_flag": "Cook Islands",
+      "mechanism": "Anchor drag",
+      "status": "CHARGED",
+      "outcome": "Vessel boarded and escorted to Finnish waters. Crew placed under travel bans; criminal proceedings opened.",
+      "why_it_matters": "Estlink 2 capacity dropped from 1,016 MW to 358 MW, so the fault is independently visible in grid data as well as in telecom outage feeds. A worked example of corroborating a behavioural detection against a non-AIS source.",
+      "sources": [
+        {"label": "Wikipedia - 2024 Estlink 2 incident", "url": "https://en.wikipedia.org/wiki/2024_Estlink_2_incident"},
+        {"label": "Baltic cable sabotage timeline", "url": "https://www.malaymail.com/news/world/2026/01/06/baltic-sea-cable-sabotage-timeline-from-nord-stream-to-2026-whos-behind-the-attacks/204485"}
+      ]
+    },
+    {
+      "id": "shunxing39-2025",
+      "date": "2025-01-03",
+      "title": "Trans-Pacific cable damaged north of Yehliu, northern Taiwan",
+      "lat": 25.32,
+      "lon": 121.69,
+      "coord_quality": "approximate",
+      "sea_area": "East China Sea",
+      "assets": ["Chunghwa Telecom international cable (4 cores damaged)"],
+      "vessel": "Shunxing-39 / Xing Shun 39",
+      "vessel_flag": "Cameroon and Tanzania (dual registration reported)",
+      "mechanism": "Suspected anchor drag; vessel reported operating two AIS transponder identities and switching between them",
+      "status": "RELEASED_NO_EVIDENCE",
+      "outcome": "Coast guard unable to board due to weather. Vessel proceeded to Busan. Shipowner denied involvement. Coast guard said intentions were impossible to confirm but could not rule out grey-zone activity.",
+      "why_it_matters": "The reference case for the identity-integrity checks in the dossier. A hull with dual registration, an IMO number not in IMO records, and two transponders will present in a naive single-MMSI view as a clean, innocent gap.",
+      "sources": [
+        {"label": "Reuters via Yahoo - shipowner denies accusation", "url": "https://www.yahoo.com/news/exclusive-china-linked-shipowner-denies-083302621.html"},
+        {"label": "NBC News - weather stymies investigation", "url": "https://www.nbcnews.com/news/world/taiwan-coast-guard-says-investigation-damaged-undersea-cable-stymied-w-rcna186524"},
+        {"label": "Jamestown Foundation - Strangers on a Seabed", "url": "https://jamestown.org/strangers-on-a-seabed-sino-russian-collaboration-on-undersea-cable-sabotage-operations/"}
+      ]
+    },
+    {
+      "id": "vezhen-2025",
+      "date": "2025-01-26",
+      "title": "Ventspils-Gotland fibre cable damaged",
+      "lat": 57.3,
+      "lon": 19.5,
+      "coord_quality": "approximate",
+      "sea_area": "Baltic Sea",
+      "assets": ["Latvia (Ventspils) to Sweden (Gotland) fibre"],
+      "vessel": "Vezhen",
+      "vessel_flag": "Malta (Bulgarian operator)",
+      "mechanism": "Anchor contact",
+      "status": "RULED_ACCIDENTAL",
+      "outcome": "Vessel seized, then released. Swedish prosecutors ruled out sabotage.",
+      "why_it_matters": "The most important case in this library. Same sea, same season, same mechanism, same initial press framing as the confirmed cases - and it was an accident. Any detection matching this profile should be read against this outcome first.",
+      "sources": [
+        {"label": "AP via Yahoo - Sweden investigating damaged cable", "url": "https://www.yahoo.com/news/sweden-investigating-cable-break-baltic-094605146.html"},
+        {"label": "Baltic cable sabotage timeline", "url": "https://www.malaymail.com/news/world/2026/01/06/baltic-sea-cable-sabotage-timeline-from-nord-stream-to-2026-whos-behind-the-attacks/204485"}
+      ]
+    },
+    {
+      "id": "hongtai58-2025",
+      "date": "2025-02-25",
+      "title": "Taiwan-Penghu cable severed",
+      "lat": 23.6,
+      "lon": 119.9,
+      "coord_quality": "approximate",
+      "sea_area": "Taiwan Strait",
+      "assets": ["Taiwan main island to Penghu Islands cable"],
+      "vessel": "Hong Tai 58",
+      "vessel_flag": "Togo",
+      "mechanism": "Loitering in the vicinity of the cable prior to the fault",
+      "status": "DETAINED",
+      "outcome": "Vessel and Chinese crew detained by the Taiwan Coast Guard, which had been monitoring it for loitering behaviour.",
+      "why_it_matters": "Loitering alone triggered the surveillance that produced the interception. Demonstrates the operational value of a low-confidence loiter alert when a watch officer can act on it.",
+      "sources": [
+        {"label": "CNN - Taiwan detains Chinese-crewed ship", "url": "https://www.cnn.com/2025/02/25/asia/taiwan-detains-ship-undersea-cable-intl-hnk"},
+        {"label": "Silobreaker", "url": "https://www.silobreaker.com/blog/geopolitical/threats-to-the-seabed-infrastructure-around-the-world/"}
+      ]
+    },
+    {
+      "id": "red-sea-2025",
+      "date": "2025-09-06",
+      "title": "Multiple cables severed in the Red Sea",
+      "lat": 21.5,
+      "lon": 38.9,
+      "coord_quality": "approximate-disputed",
+      "sea_area": "Red Sea",
+      "assets": ["Reported as up to 15 cable systems affected"],
+      "vessel": "Not established",
+      "vessel_flag": null,
+      "mechanism": "Not established; reporting indicates the damage appeared accidental",
+      "status": "UNATTRIBUTED",
+      "outcome": "Latency increases and widespread disruption across the Middle East and South Asia.",
+      "why_it_matters": "Largest single disruption in the series and the one with the least AIS evidence. A chokepoint outside dense terrestrial receiver coverage is exactly where this tool has least to say.",
+      "sources": [
+        {"label": "Marine Technology News - Subsea Cable Sabotage", "url": "https://www.marinetechnologynews.com/news/subsea-cable-sabotage-underwater-656389"}
+      ]
+    },
+    {
+      "id": "fitburg-2025",
+      "date": "2025-12-31",
+      "title": "Elisa and Arelion cables, Helsinki to Tallinn",
+      "lat": 59.9,
+      "lon": 25.0,
+      "coord_quality": "approximate",
+      "sea_area": "Gulf of Finland",
+      "assets": ["Elisa cable (FI-EE)", "Arelion cable (FI-EE)", "Arelion cable (EE-SE)", "CITIC-owned cable (EE-SE)", "Telia cable (Laanemaa-Hiiumaa)"],
+      "vessel": "Fitburg",
+      "vessel_flag": "St Vincent & the Grenadines",
+      "mechanism": "Anchor drag; vessel intercepted with anchor still in the water, seabed tracks running several tens of kilometres",
+      "status": "CHARGED",
+      "outcome": "Seized by Finnish authorities in the Estonian EEZ while transiting St Petersburg to Haifa. Fourteen crew from Russia, Georgia, Azerbaijan and Kazakhstan detained; two arrested, two travel-banned. Investigated as aggravated criminal damage and aggravated interference with telecommunications.",
+      "why_it_matters": "Cleanest labelled positive in the series: intercepted mid-act, with physical seabed evidence and a documented drag length. Use it as the reference track when tuning thresholds.",
+      "sources": [
+        {"label": "The Register - crew interviewed", "url": "https://www.theregister.com/2026/01/02/finnish_cops_interviewing_fitburg_crew"},
+        {"label": "Moscow Times - Finland seizes cargo ship", "url": "https://www.themoscowtimes.com/2026/01/01/finland-seizes-cargo-ship-suspected-of-damaging-undersea-cable-a91598"},
+        {"label": "Wikipedia - 2025 Elisa data cable incident", "url": "https://en.wikipedia.org/wiki/2025_Elisa_data_cable_incident"},
+        {"label": "Insurance Journal", "url": "https://www.insurancejournal.com/news/international/2026/01/02/852882.htm"}
+      ]
+    },
+    {
+      "id": "sventoji-liepaja-2026",
+      "date": "2026-01-02",
+      "title": "Sventoji to Liepaja telecom cable damaged",
+      "lat": 56.2,
+      "lon": 20.8,
+      "coord_quality": "approximate",
+      "sea_area": "Baltic Sea",
+      "assets": ["Arelion cable, Lithuania to Latvia"],
+      "vessel": "Unnamed vessel boarded at Liepaja",
+      "vessel_flag": null,
+      "mechanism": "Not established",
+      "status": "RELEASED_NO_EVIDENCE",
+      "outcome": "Latvian police boarded a ship docked at Liepaja and opened criminal proceedings, then reported finding no evidence linking it to the damage.",
+      "why_it_matters": "Second calibration case for false positives: proximity plus timing was enough to justify boarding and not enough to sustain a link.",
+      "sources": [
+        {"label": "Baltic cable sabotage timeline", "url": "https://www.malaymail.com/news/world/2026/01/06/baltic-sea-cable-sabotage-timeline-from-nord-stream-to-2026-whos-behind-the-attacks/204485"}
+      ]
+    }
+  ]
+}

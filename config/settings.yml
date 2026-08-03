@@ -1,0 +1,54 @@
+# GRAPNEL configuration
+#
+# Pick one area of interest per deployment. Running a global bbox against a
+# terrestrial AIS feed produces mostly empty ocean and a very slow build; the
+# tool is designed for dense-coverage littorals where the confirmed casework is.
+
+name: gulf-of-finland
+
+# (min_lon, min_lat, max_lon, max_lat)
+# Gulf of Finland and the northern Baltic: Estlink, C-Lion1, the Helsinki-Tallinn
+# telecom bundle. Digitraffic covers this well and DMA covers the western approach.
+bbox: [18.0, 58.5, 30.5, 61.0]
+
+# Other areas of interest, for reference:
+#   southern-baltic:   [14.0, 54.0, 21.5, 58.0]   # Bornholm, Oland, Gotland, SE-LT routes
+#   irish-sea:         [-7.0, 51.5, -2.5, 55.0]   # Dublin-Holyhead corridor
+#   taiwan-north:      [120.5, 24.5, 122.5, 26.5] # Yehliu, Keelung, Matsu approaches
+#   north-sea-german:  [3.0, 53.0, 9.5, 56.0]
+
+sources:
+  - digitraffic          # free, live, Finnish waters, no key
+  # - dma                # free, historical, Danish waters; large downloads
+
+# TeleGeography supplies the *display* layer only. It is cartographic, not
+# survey, geometry - see cables.py. Detections built on it are capped at LOW
+# confidence by design. Set to false if you want charted-only operation.
+use_telegeography: true
+
+# Charted cable geometry from ENC data. This is what lifts a detection above
+# LOW confidence. Produce with GDAL against an S-57 cell:
+#
+#   ogr2ogr -f GeoJSON data/enc/fi_cblsub.json /path/ENC_ROOT/FI5xxxxx.000 CBLSUB
+#
+# Sources: NOAA (US, free), Traficom (FI), DMA (DK), Sjofartsverket (SE),
+# Transpordiamet (EE), UKHO ADMIRALTY (UK, paid), Kingfisher (UK fishing charts).
+charted_cable_files: []
+#  - path: data/enc/fi_cblsub.json
+#    label: "Traficom ENC CBLSUB"
+#    stated_accuracy_m: 50
+
+thresholds:
+  corridor_m: 3000
+  drag_max_sog: 5.0
+  drag_min_duration_s: 1800
+  drag_min_distance_m: 3000
+  drag_min_cog_stability: 0.94
+  drag_speed_ratio: 0.55
+  loiter_max_sog: 2.0
+  loiter_min_duration_s: 7200
+  gap_min_s: 3600
+  gap_max_entry_dist_m: 25000
+
+retain_days: 45
+max_detections_published: 500

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRAPNEL — subsea cable threat monitoring</title>
+<meta name="description" content="Open-source AIS monitoring for anomalous vessel behaviour over submarine cable corridors. Observations with evidence, not accusations.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<link href="assets/style.css" rel="stylesheet">
+</head>
+<body>
+
+<div id="shell">
+  <header>
+    <div>
+      <div class="wordmark">Grap<span>nel</span></div>
+      <div class="tagline">Anomalous vessel behaviour over submarine cable corridors</div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div id="banner" hidden></div>
+
+  <div id="body">
+    <aside id="rail">
+      <div class="rail-head">
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" id="tab-det" aria-selected="true" aria-controls="list">Detections</button>
+          <button class="tab" role="tab" id="tab-inc" aria-selected="false" aria-controls="list">Precedent</button>
+        </div>
+        <div class="filters" id="filters"></div>
+      </div>
+      <div id="list"></div>
+    </aside>
+
+    <div id="map">
+      <div class="legend">
+        <div><span class="swatch" style="background:#e85aa0"></span> Cable route</div>
+        <div><span class="swatch" style="background:#4fd1a5"></span> Charted geometry</div>
+        <div><span class="dot" style="background:#f2c744"></span> Detection</div>
+        <div><span class="dot" style="background:#6aa9e8"></span> Documented incident</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="dossier" aria-hidden="true" aria-label="Vessel dossier">
+  <div class="dossier-head">
+    <div>
+      <h2 id="d-title">—</h2>
+      <div class="mmsi" id="d-mmsi"></div>
+    </div>
+    <button class="close" id="d-close" aria-label="Close dossier">×</button>
+  </div>
+  <div class="dossier-body" id="d-body"></div>
+</section>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
