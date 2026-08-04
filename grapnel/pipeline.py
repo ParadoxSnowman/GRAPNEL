@@ -16,7 +16,7 @@ import pandas as pd
 
 import numpy as np
 
-from . import cables, detect, dossier, outages
+from . import anchorages, cables, detect, dossier, outages
 from .config import Config
 from .sources.base import empty_positions, empty_static
 
@@ -205,7 +205,7 @@ def build_vessel_layer(positions: pd.DataFrame, static: pd.DataFrame, index, rou
 
 
 def publish(cfg: Config, routes, detections, faults, positions, static, window_start, window_end,
-            warnings=None, track_quality=None) -> None:
+            warnings=None, track_quality=None, places=None) -> None:
     """Write everything the static site reads. No server, no database."""
     out = Path(cfg.site_data_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -300,6 +300,7 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
                     "in_corridor_now": len(watchlist),
                 },
                 "thresholds": vars(cfg.thresholds),
+                "suppression": places.stats() if places else {},
                 "detections": [d.to_dict() for d in detections],
             },
             separators=(",", ":"),
@@ -400,8 +401,18 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
         log.error("no positions from any source and nothing previously published")
         return 2
 
+    # Learn where vessels normally stop BEFORE detecting, and persist it. The
+    # model improves every run: a fresh deployment suppresses only seeded ports
+    # and landing points, a month-old one knows every anchorage in its area.
+    places = anchorages.StoppingPlaces(Path(cfg.data_dir))
+    places.seed(ports_file=Path(cfg.data_dir) / "ports" / "ne_10m_ports.geojson",
+                landings_file=Path(cfg.data_dir) / "cables" / "landing-points-world.geojson")
+    places.learn(positions)
+    places.save()
+    log.info("stopping places: %s", places.stats())
+
     track_quality: dict = {}
-    dets = detect.run(positions, routes, cfg.thresholds, quality_out=track_quality)
+    dets = detect.run(positions, routes, cfg.thresholds, quality_out=track_quality, places=places)
     dets = detect.flag_repeat_presence(dets)
 
     # Global Fishing Watch: satellite-backed events. Optional, and the only
@@ -436,7 +447,7 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
             "polling. The vessel layer and corridor watchlist are unaffected.")
 
     publish(cfg, routes, dets, faults, positions, static, window_start, now,
-            warnings=warnings, track_quality=track_quality)
+            warnings=warnings, track_quality=track_quality, places=places)
     return 0
 
 

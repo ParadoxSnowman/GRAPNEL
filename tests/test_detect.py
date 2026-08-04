@@ -237,3 +237,82 @@ def test_corrupt_fix_cannot_manufacture_a_drag():
 def test_clean_track_is_not_flagged():
     from grapnel.quality import CLEAN, assess
     assert assess(frame(crossing(999999999, sog=11.0))).verdict == CLEAN
+
+
+# -------------------------------------------------- moored / anchored vessels
+
+def _station(mmsi, mode, nav, n=60, lat=59.85, lon=24.80):
+    """Synthesise the four states a nearly-stationary vessel can be in."""
+    import numpy as np
+    rng = np.random.default_rng(3)
+    rows = []
+    for i in range(n):
+        if mode == "berth":     dlat, dlon = rng.normal(0, 0.00015), rng.normal(0, 0.00015)
+        elif mode == "swing":   a = 2 * np.pi * i / n; dlat, dlon = 0.0018 * np.sin(a), 0.0030 * np.cos(a)
+        elif mode == "drag":    dlat, dlon = 0.00010 * i, 0.00016 * i
+        else:                   dlat, dlon = rng.normal(0, 0.0004), rng.normal(0, 0.0004)
+        rows.append({"ts": T0 + dt.timedelta(minutes=5 * i), "mmsi": mmsi,
+                     "lat": lat + dlat, "lon": lon + dlon, "sog": 0.4,
+                     "cog": float(rng.uniform(0, 359)), "heading": 511.0,
+                     "nav_status": nav, "source": "test"})
+    return frame(rows)
+
+
+def _places(tmp_path):
+    from grapnel.anchorages import StoppingPlaces
+    return StoppingPlaces(tmp_path)
+
+
+def test_berthed_vessel_never_fires(tmp_path):
+    """The bug that made the tool unusable: cable routes end at landing
+    stations, landing stations sit beside ports, and a 3 km corridor swallows
+    whole harbours. Every ship at a berth satisfied 'slow for two hours'."""
+    g = _station(101010101, "berth", "Moored")
+    assert not detect.run(g, [route()], places=_places(tmp_path))
+
+
+def test_vessel_riding_to_anchor_never_fires(tmp_path):
+    g = _station(202020202, "swing", "At anchor")
+    assert not detect.run(g, [route()], places=_places(tmp_path))
+
+
+def test_dragging_anchor_still_fires(tmp_path):
+    """The suppression must not swallow the case the project exists for.
+    A hull dragging its anchor MOVES, so it fails the confinement test even
+    while reporting 'At anchor'."""
+    g = _station(303030303, "drag", "At anchor")
+    assert detect.run(g, [route()], places=_places(tmp_path))
+
+
+def test_holding_station_in_open_water_still_fires(tmp_path):
+    """Hong Tai 58 held station over the Taiwan-Penghu cable before it was cut.
+    Geometrically identical to an anchored ship; only location distinguishes
+    them, which is why suppression is location-based rather than geometric."""
+    g = _station(404040404, "hold", "Under way using engine")
+    assert detect.run(g, [route()], places=_places(tmp_path))
+
+
+def test_learned_anchorage_suppresses(tmp_path):
+    """A place where many DIFFERENT vessels sit still is an anchorage by
+    definition, and self-calibrates without any port database."""
+    from grapnel.anchorages import StoppingPlaces
+    places = StoppingPlaces(tmp_path)
+    crowd = pd.concat([_station(500000000 + i, "hold", "At anchor", n=8) for i in range(6)])
+    assert places.why_normal(59.85, 24.80) is None
+    places.learn(crowd)
+    assert places.why_normal(59.85, 24.80) is not None
+    assert not detect.run(_station(606060606, "hold", "Under way using engine"),
+                          [route()], places=places)
+
+
+def test_seeded_port_suppresses(tmp_path):
+    import json
+    from grapnel.anchorages import StoppingPlaces
+    p = tmp_path / "ports.geojson"
+    p.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": [24.80, 59.85]},
+         "properties": {"name": "Test Harbour"}}]}))
+    places = StoppingPlaces(tmp_path)
+    places.seed(ports_file=p)
+    assert "Test Harbour" in (places.why_normal(59.85, 24.80) or "")
+    assert places.why_normal(59.85, 20.00) is None

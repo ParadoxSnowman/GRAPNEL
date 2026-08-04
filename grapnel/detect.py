@@ -33,6 +33,7 @@ from shapely.geometry import Point
 from shapely.strtree import STRtree
 
 from .cables import CHARTED, CableRoute
+from .anchorages import StoppingPlaces, stationarity
 from .quality import assess, split_on_impossible
 from .geom import angular_diff, haversine_m, initial_bearing, track_stats
 
@@ -360,12 +361,27 @@ def detect_anchor_drag(part, route, ridx, index, th, baseline_sog, in_corridor_m
 
 # ------------------------------------------------------------------- loiter
 
-def detect_loiter(part, route, ridx, index, th):
-    """Near-stationary presence over a cable, sustained.
+def detect_loiter(part, route, ridx, index, th, places=None):
+    """Near-stationary presence over a cable where stopping is NOT normal.
 
-    Mirrors Global Fishing Watch's loitering parameterisation rather than
-    inventing a threshold. Benign causes are everywhere, so this fires often and
-    is only useful once joined to corroboration or repeat presence.
+    The bar is far higher than "slow for a while", because slow for a while
+    describes every berthed ship on earth. Three independent guards, any one of
+    which suppresses the detection:
+
+      GEOMETRY. A moored hull's fixes scatter by GPS noise alone, tens of
+      metres. A hull at anchor swings through an arc and ends where it started.
+      Neither is interesting. Only a cloud with real extent, or real net
+      displacement, survives.
+
+      LOCATION. Ports and cable landing points are seeded; anchorages,
+      roadsteads and fishing grounds are learned from the observed data as
+      places where many DIFFERENT vessels sit still. Stopping there means
+      nothing.
+
+      SELF-REPORT. A vessel reporting "Moored" throughout is at a berth. This
+      is falsifiable and a determined actor could lie, but the failure mode of
+      trusting it is a missed detection, whereas the failure mode of ignoring
+      it is a feed so full of berthed ships that nobody reads it.
     """
     st = track_stats(list(part["ts"]), part["lat"].values, part["lon"].values,
                      part["sog"].values, part["cog"].values)
@@ -374,20 +390,52 @@ def detect_loiter(part, route, ridx, index, th):
     if not math.isfinite(st.mean_sog) or st.mean_sog > th.loiter_max_sog:
         return None
 
-    score = round(min(1.0, st.duration_s / 86400.0) * 0.7
-                  + (1.0 - min(1.0, st.mean_sog / th.loiter_max_sog)) * 0.3, 3)
+    statuses = {str(x) for x in part["nav_status"].dropna().unique()}
+    shape = stationarity(part["lat"].values, part["lon"].values)
+
+    # Made fast to a pier. Decidable from scatter alone.
+    if shape.verdict == "BERTHED":
+        return None
+    if statuses and statuses <= {"Moored"}:
+        return None
+
+    # Self-reported at anchor AND geometrically confined to a circle. That is a
+    # vessel riding to its anchor, which is what anchors are for. Note the
+    # asymmetry being accepted here: a hull dragging its anchor MOVES, so it
+    # fails the confinement test and still reports. What this suppresses is
+    # anchored-and-staying-put, which is not a threat to anything.
+    if ("At anchor" in statuses and shape.verdict == "HOLDING_STATION"
+            and shape.net_displacement_m < 500.0):
+        return None
+
+    normal = places.why_normal(st.mean_lat, st.mean_lon) if places else None
+    if normal:
+        return None
+
     dists = index.distance_m(ridx, part["lat"].values, part["lon"].values)
+    score = round(min(1.0, st.duration_s / 86400.0) * 0.55
+                  + (1.0 - min(1.0, st.mean_sog / th.loiter_max_sog)) * 0.20
+                  + min(1.0, shape.net_displacement_m / 2000.0) * 0.25, 3)
+
     return _base(
         "loiter", part, route, st, CONFIDENCE_LOW, score,
-        f"Near-stationary for {st.duration_s/3600:.1f} h over the corridor at {st.mean_sog:.1f} kn mean.",
+        f"Held station {st.duration_s/3600:.1f} h over the corridor at {st.mean_sog:.1f} kn "
+        f"({shape.verdict.lower().replace('_', ' ')}), somewhere vessels are not observed to stop.",
         {
             "mean_sog_kn": round(st.mean_sog, 2),
             "hours": round(st.duration_s / 3600, 2),
             "closest_approach_m": int(np.nanmin(dists)) if len(dists) else None,
             "positions": st.n,
-            "nav_status_reported": sorted({str(x) for x in part["nav_status"].dropna().unique()}),
+            "nav_status_reported": sorted(statuses),
+            "stationarity": shape.to_dict(),
+            "suppression_checks_passed": [
+                "not berthed or swinging at anchor by track geometry",
+                "not within a seeded port or cable landing point",
+                "not in a cell where other vessels are observed to stop",
+                "not self-reporting Moored throughout",
+            ],
             "benign_explanations": [
-                "designated anchorage or waiting area",
+                "an anchorage this deployment has not yet learned",
                 "fishing on grounds that overlie the route",
                 "weather or ice hold",
                 "drifting with machinery breakdown",
@@ -553,7 +601,7 @@ def detect_corridor_gap(g, routes, index, th):
 
 
 
-def _detect_segment(g, routes, index, survey_index, th, baseline, detections):
+def _detect_segment(g, routes, index, survey_index, th, baseline, detections, places=None):
     """Run every behavioural detector over one uncorrupted track segment."""
     mask = index.mask(g["lon"].values, g["lat"].values)
     smask = survey_index.mask(g["lon"].values, g["lat"].values)
@@ -582,7 +630,7 @@ def _detect_segment(g, routes, index, survey_index, th, baseline, detections):
             for part in _segments(g[mask[ridx]], th.max_gap_for_continuity_s):
                 if len(part) < 3:
                     continue
-                det = detect_loiter(part, route, ridx, index, th)
+                det = detect_loiter(part, route, ridx, index, th, places)
                 if det:
                     detections.append(det)
 
@@ -598,7 +646,7 @@ def _detect_segment(g, routes, index, survey_index, th, baseline, detections):
 # --------------------------------------------------------------------- run
 
 def run(positions: pd.DataFrame, routes: list[CableRoute], th: Thresholds | None = None,
-        quality_out: dict | None = None) -> list[Detection]:
+        quality_out: dict | None = None, places: StoppingPlaces | None = None) -> list[Detection]:
     """Run every detector over a canonical position frame.
 
     quality_out, if given, is filled with per-MMSI TrackQuality for every track
@@ -646,7 +694,7 @@ def run(positions: pd.DataFrame, routes: list[CableRoute], th: Thresholds | None
         for clean in split_on_impossible(g, th.impossible_kn):
             if len(clean) < 2:
                 continue
-            _detect_segment(clean, routes, index, survey_index, th, baseline, detections)
+            _detect_segment(clean, routes, index, survey_index, th, baseline, detections, places)
 
     for d in detections:
         q = quality.get(d.mmsi)
