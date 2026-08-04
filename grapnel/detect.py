@@ -191,6 +191,11 @@ class CorridorIndex:
         self.polys = [r.corridor(corridor_m) for r in routes]
         self.tree = STRtree(self.polys) if self.polys else None
         self._coords = [np.asarray(r.line.coords, dtype="float64") for r in routes]
+        # Second index over the route lines themselves. Brute-forcing every
+        # vessel against every route's vertices is O(V x R x N) - fine for a
+        # gulf, hopeless for 1,378 routes worldwide.
+        self._lines = [r.line for r in routes]
+        self._line_tree = STRtree(self._lines) if self._lines else None
 
     def hits(self, lon: float, lat: float) -> list[int]:
         if self.tree is None:
@@ -207,6 +212,36 @@ class CorridorIndex:
             for i in self.hits(float(lons[j]), float(lats[j])):
                 out[i, j] = True
         return out
+
+    def nearest(self, lat: float, lon: float):
+        """(route_index, geodesic_metres) for the closest route to a point.
+
+        The tree ranks candidates in planar degrees, which is not distance, so
+        we take a handful of candidates and re-rank them geodesically. Planar
+        ranking alone picks the wrong cable at high latitude, where a degree of
+        longitude is half what it is at the equator - and the Baltic and the
+        Norwegian Sea are exactly where this tool is most used.
+        """
+        if self._line_tree is None:
+            return None, None
+        pt = Point(lon, lat)
+        try:
+            idxs = self._line_tree.query_nearest(pt, max_distance=None, exclusive=False, all_matches=False)
+            cand = [int(i) for i in np.atleast_1d(idxs)]
+        except (AttributeError, TypeError):
+            cand = [int(self._line_tree.nearest(pt))]
+        # Widen with a small planar envelope so the geodesic re-rank has
+        # something to choose between.
+        try:
+            cand += [int(i) for i in self._line_tree.query(pt.buffer(0.6))]
+        except Exception:
+            pass
+        best_i, best_d = None, float("inf")
+        for i in dict.fromkeys(cand):
+            dm = float(self.distance_m(i, [lat], [lon])[0])
+            if dm < best_d:
+                best_i, best_d = i, dm
+        return best_i, best_d
 
     def distance_m(self, route_idx: int, lat, lon) -> np.ndarray:
         """Approximate cross-track distance to the densified route line."""

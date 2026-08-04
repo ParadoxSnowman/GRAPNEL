@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import json
 import logging
 from pathlib import Path
@@ -31,6 +32,11 @@ def build_sources(cfg: Config):
             from .sources.digitraffic import DigitrafficSource
 
             out.append(DigitrafficSource())
+        elif name == "aisstream":
+            from .sources.aisstream import AISStreamSource
+
+            out.append(AISStreamSource(
+                collect_seconds=int(os.environ.get("AISSTREAM_SECONDS", "180"))))
         elif name == "dma":
             from .sources.dma import DMASource
 
@@ -150,11 +156,10 @@ def build_vessel_layer(positions: pd.DataFrame, static: pd.DataFrame, index, rou
     lons = latest["lon"].to_numpy(dtype="float64")
     best_d = np.full(len(latest), np.inf)
     best_r = np.full(len(latest), -1, dtype=int)
-    for ridx in range(len(routes)):
-        d = index.distance_m(ridx, lats, lons)
-        closer = d < best_d
-        best_d[closer] = d[closer]
-        best_r[closer] = ridx
+    for k in range(len(latest)):
+        ridx, dm = index.nearest(float(lats[k]), float(lons[k]))
+        if ridx is not None:
+            best_r[k], best_d[k] = ridx, dm
 
     feats, watch = [], []
     for i, r in enumerate(latest.itertuples()):
@@ -215,10 +220,15 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
     )
 
     # --- corridors, for the map to show what "near" actually means ---------
+    # Corridors are a visual aid on the map; detection uses the full-precision
+    # geometry held in memory. At world scale the unsimplified layer is ~6 MB,
+    # which is a slow first paint for no analytic gain, so what gets published
+    # is simplified. Tolerance is roughly a tenth of the corridor half-width.
+    simplify_deg = max(0.002, (cfg.thresholds.corridor_m / 111_000.0) * 0.35)
     corridor_feats = []
     for r in routes:
         try:
-            poly = r.corridor(cfg.thresholds.corridor_m)
+            poly = r.corridor(cfg.thresholds.corridor_m).simplify(simplify_deg, preserve_topology=True)
             corridor_feats.append(
                 {
                     "type": "Feature",
@@ -233,6 +243,23 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
         json.dumps({"type": "FeatureCollection", "features": corridor_feats}, separators=(",", ":")),
         encoding="utf-8",
     )
+
+    # --- landing points ----------------------------------------------------
+    lp = Path(cfg.data_dir) / "cables" / "landing-points-world.geojson"
+    if lp.exists():
+        try:
+            data = json.loads(lp.read_text(encoding="utf-8"))
+            minx, miny, maxx, maxy = cfg.bbox
+            data["features"] = [
+                f for f in data.get("features", [])
+                if (f.get("geometry", {}).get("coordinates")
+                    and minx <= f["geometry"]["coordinates"][0] <= maxx
+                    and miny <= f["geometry"]["coordinates"][1] <= maxy)
+            ]
+            (out / "landing-points.geojson").write_text(
+                json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        except (json.JSONDecodeError, OSError, KeyError, IndexError) as exc:
+            log.warning("landing points unreadable: %s", exc)
 
     # --- live vessels and corridor watchlist -------------------------------
     index = detect.CorridorIndex(routes, cfg.thresholds.corridor_m)

@@ -45,8 +45,9 @@ const map = new maplibregl.Map({
       { id: 'basemap', type: 'raster', source: 'basemap', paint: { 'raster-opacity': 0.55, 'raster-saturation': -0.3 } },
     ],
   },
-  center: [25.0, 59.85],
-  zoom: 7,
+  center: [10, 25],
+  zoom: 1.4,
+  renderWorldCopies: true,
   attributionControl: { compact: true },
 });
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
@@ -55,13 +56,17 @@ map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-right'
 const empty = { type: 'FeatureCollection', features: [] };
 
 map.on('load', async () => {
-  for (const id of ['corridors', 'cables', 'vessels', 'detections', 'incidents', 'track']) {
+  for (const id of ['corridors', 'cables', 'landings', 'vessels', 'detections', 'incidents', 'track']) {
     map.addSource(id, { type: 'geojson', data: empty });
   }
 
   map.addLayer({
     id: 'corridor-fill', type: 'fill', source: 'corridors',
-    paint: { 'fill-color': '#e85aa0', 'fill-opacity': 0.07 },
+    minzoom: 4,
+    paint: {
+      'fill-color': '#e85aa0',
+      'fill-opacity': ['interpolate', ['linear'], ['zoom'], 4, 0, 6, 0.10],
+    },
   });
 
   // Magenta is the chart colour for submarine cables. Charted geometry gets a
@@ -76,6 +81,28 @@ map.on('load', async () => {
       'line-opacity': 0.85,
     },
   });
+
+  // Landing points: a cable's only position with a defensible accuracy, because
+  // a landing station is a building on a beach rather than an Illustrator path.
+  map.addLayer({
+    id: 'landing-dot', type: 'circle', source: 'landings',
+    minzoom: 3,
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 1.4, 8, 3.5],
+      'circle-color': '#f2c744',
+      'circle-opacity': 0.75,
+      'circle-stroke-width': 0.5,
+      'circle-stroke-color': '#070c12',
+    },
+  });
+  map.on('click', 'landing-dot', (e) => {
+    new maplibregl.Popup({ closeButton: false, offset: 6 })
+      .setLngLat(e.lngLat)
+      .setHTML(`<b>${esc(e.features[0].properties.name || 'Landing point')}</b><br>Cable landing station`)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'landing-dot', () => (map.getCanvas().style.cursor = 'pointer'));
+  map.on('mouseleave', 'landing-dot', () => (map.getCanvas().style.cursor = ''));
 
   // Live traffic. Drawn beneath everything else and kept deliberately quiet:
   // it is context, not signal. Hulls currently inside a corridor get the chart
@@ -168,15 +195,17 @@ async function getJSON(name) {
 }
 
 async function load() {
-  const [dets, cables, corridors, incidents, vessels, watch] = await Promise.all([
+  const [dets, cables, corridors, incidents, vessels, watch, landings] = await Promise.all([
     getJSON('detections.json'), getJSON('cables.geojson'),
     getJSON('corridors.geojson'), getJSON('incidents.json'),
     getJSON('vessels.geojson'), getJSON('watchlist.json'),
+    getJSON('landing-points.geojson'),
   ]);
 
   if (cables) map.getSource('cables').setData(cables);
   if (corridors) map.getSource('corridors').setData(corridors);
   if (vessels) map.getSource('vessels').setData(vessels);
+  if (landings) map.getSource('landings').setData(landings);
   state.watchlist = (watch && watch.vessels) || [];
   state.watchNote = (watch && watch.note) || '';
 
@@ -232,13 +261,18 @@ async function load() {
       + 'The routes on the map are real. There are no vessels because no AIS source has run.<br><br>'
       + '<code>python -m grapnel.pipeline</code> — live feed, vessels appear at once, '
       + 'detections after a few hours of polling<br><br>'
+      + '<code>AISSTREAM_API_KEY=... python -m grapnel.pipeline</code> — global live AIS '
+      + '(free key at aisstream.io)<br><br>'
       + '<code>python scripts/bootstrap.py --days 1</code> — real historical AIS, '
       + 'real detections immediately'
       + '</div>';
   }
 
   const bbox = dets.area && dets.area.bbox;
-  if (bbox) map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 60, duration: 0 });
+  const global = bbox && bbox[0] <= -179 && bbox[2] >= 179;
+  if (bbox && !global) {
+    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 60, duration: 0 });
+  }
 }
 
 function featureCollection() {

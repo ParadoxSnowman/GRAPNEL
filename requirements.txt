@@ -5,3 +5,4 @@ shapely>=2.0
 pyproj>=3.6
 PyYAML>=6.0
 pyarrow>=14.0
+websockets>=12.0

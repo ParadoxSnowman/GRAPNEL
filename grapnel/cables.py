@@ -52,6 +52,10 @@ class CableRoute:
     length_km: float | None = None
     stated_accuracy_m: float | None = None
     corridors: dict = field(default_factory=dict, repr=False)
+    #: Original, undensified geometry. `line` carries a vertex every ~2 km so
+    #: nearest-point distance behaves; that is a detection concern and must
+    #: never reach the browser.
+    display_line: object = field(default=None, repr=False)
 
     def corridor(self, metres: float):
         key = float(metres)
@@ -62,7 +66,9 @@ class CableRoute:
     def to_geojson_feature(self):
         return {
             "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": [[round(x, 5), round(y, 5)] for x, y in self.line.coords]},
+            "geometry": {"type": "LineString",
+                         "coordinates": [[round(x, 4), round(y, 4)]
+                                         for x, y in (self.display_line or self.line).coords]},
             "properties": {
                 "cable_id": self.cable_id,
                 "name": self.name,
@@ -160,6 +166,7 @@ def routes_from_telegeography(geo: dict, meta: dict, bbox=None) -> list[CableRou
                 positional_class=DISPLAY,
                 source="TeleGeography (CC BY-NC-SA 3.0) - display geometry, not survey",
                 line=densify(ls, 2000.0),
+                display_line=ls,
                 owners=str(m.get("owners", "") or props.get("owners", "")),
                 rfs=str(m.get("rfs", "") or props.get("rfs", "")),
                 length_km=_to_float(m.get("length")),
@@ -199,6 +206,7 @@ def routes_from_geojson(path: Path, source_label: str, positional_class: str = C
                 positional_class=positional_class,
                 source=source_label,
                 line=densify(ls, 2000.0),
+                display_line=ls,
                 stated_accuracy_m=stated_accuracy_m,
             ))
     return out

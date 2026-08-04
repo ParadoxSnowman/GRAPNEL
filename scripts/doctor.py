@@ -15,7 +15,10 @@ the workflow so a misconfiguration is legible on the run page instead of
 appearing as a stack trace four hundred lines into the pipeline log.
 """
 
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` and no modern syntax anywhere in
+# this file, on purpose. If the interpreter is too old to parse the rest of the
+# package, this script still has to run and say so. A diagnostic that dies from
+# the fault it is meant to diagnose is useless.
 
 import argparse
 import datetime as dt
@@ -25,6 +28,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+MIN_PY = (3, 10)
+REQUIRED = ["requests", "pandas", "numpy", "shapely", "pyproj", "yaml"]
 
 OK, WARN, BAD, INFO = "ok", "warn", "bad", "info"
 MARK = {OK: "PASS", WARN: "WARN", BAD: "FAIL", INFO: "----"}
@@ -54,6 +60,50 @@ def main() -> int:
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--no-network", action="store_true")
     args = ap.parse_args()
+
+    # ------------------------------------------------------------ interpreter
+    v = sys.version_info
+    if v[:2] < MIN_PY:
+        check(BAD, "Python %d.%d is too old" % (v[0], v[1]),
+              "GRAPNEL needs %d.%d or newer. The codebase uses `X | None` type syntax, "
+              "so on an older interpreter every command fails with SyntaxError before "
+              "anything runs. Install a newer Python and re-create your venv."
+              % MIN_PY)
+        return report(args)
+    check(OK, "Python %d.%d.%d" % v[:3], sys.executable)
+
+    missing = []
+    for mod in REQUIRED:
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(mod)
+    if missing:
+        check(BAD, "Missing packages: " + ", ".join(missing),
+              "Run: pip install -r requirements.txt")
+        return report(args)
+    check(OK, "All required packages importable", ", ".join(REQUIRED))
+
+    try:
+        import shapely
+        major = int(str(shapely.__version__).split(".")[0])
+        if major < 2:
+            check(BAD, "Shapely %s is too old" % shapely.__version__,
+                  "Needs 2.0+. In 1.x, STRtree.query returns geometries rather than "
+                  "indices, so corridor lookups fail in a way that looks like 'no results' "
+                  "rather than an error. Run: pip install -U 'shapely>=2.0'")
+        else:
+            check(OK, "Shapely %s" % shapely.__version__)
+    except Exception as exc:
+        check(WARN, "Could not check Shapely version", str(exc))
+
+    try:
+        import pyarrow  # noqa: F401
+        check(OK, "pyarrow present", "Parquet archive enabled")
+    except ImportError:
+        check(WARN, "pyarrow missing",
+              "The archive falls back to gzipped CSV. Works, but slower and larger. "
+              "pip install pyarrow")
 
     # ---------------------------------------------------------------- config
     try:

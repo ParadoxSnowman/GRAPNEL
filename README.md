@@ -8,9 +8,24 @@ A grapnel is the tool used to hook a cable off the seabed — for repair, or oth
 
 ## What is real and what is not
 
-**Real, shipped in the repo:** cable geometry for the Baltic — 48 routes including C-Lion1, BCS East-West Interlink, Sweden–Estonia (EE-S 1), Finland–Estonia 2 and 3, NordBalt, Eastern Light. Every cable named in the incident record. Loaded from `data/cables/`, no network call.
+**Real, shipped in the repo, visible with zero setup:** every submarine cable on earth. 503 systems, 1,378 route segments, 1,335 landing points. C-Lion1, 2Africa, MAREA, Grace Hopper, the lot. Push the repo, turn on Pages, and you have a working global cable map before you install Python.
 
-**Real, one command away:** AIS. `python -m grapnel.pipeline` for the live Finnish feed, `python scripts/bootstrap.py --days 1` for real historical Danish archives and real detections.
+**Real, one command away:** AIS.
+
+| Source | Coverage | Key | Gives you |
+|---|---|---|---|
+| `aisstream` | **Global** coastal | free | Streams continuously — 3 min of collection yields real tracks on run one |
+| `digitraffic` | Finnish waters | none | Snapshot only; one fix per poll |
+| `dma` | Danish waters, back to 2006 | none | Historical archives — real detections immediately |
+
+Default is `aisstream`. Get a free key at <https://aisstream.io>, then:
+
+```bash
+export AISSTREAM_API_KEY=your_key
+python -m grapnel.pipeline -v
+```
+
+**There is no free global AIS mid-ocean, and no code fixes that.** Terrestrial AIS is line-of-sight VHF, so coverage is good near populated coasts and absent in open water. Satellite AIS is commercial. A vessel that disappears 300 nm offshore has gone over the horizon, not dark. The useful part: cables are most vulnerable in shallow, busy, coastal water, which is precisely where the coverage is.
 
 **Synthetic, opt-in only:** `scripts/make_demo.py --write`. It refuses to run without the flag, because shipping fabricated data as a site's default state makes a broken deployment indistinguishable from a working one.
 
@@ -138,7 +153,7 @@ cd docs && python -m http.server 8000
 Cable geometry ships with the repo. To refresh it or cover a different sea:
 
 ```bash
-python scripts/fetch_cables.py --area baltic     # or gulf-of-finland, taiwan, irish-sea, north-sea
+python scripts/fetch_cables.py --area world      # or baltic, gulf-of-finland, taiwan, irish-sea, north-sea
 ```
 
 Synthetic data is opt-in and refuses to run without `--write`:
