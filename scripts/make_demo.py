@@ -10,6 +10,7 @@ run the real pipeline before publishing anything.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import math
@@ -211,6 +212,20 @@ DEMO_FAULTS = [{
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Generate synthetic demo data")
+    ap.add_argument("--write", action="store_true",
+                    help="required: overwrite docs/data with SYNTHETIC data")
+    args = ap.parse_args()
+    if not args.write:
+        print(__doc__)
+        print("This overwrites docs/data with FABRICATED vessels and cables.\n"
+              "Nothing it produces refers to any real vessel or cable.\n\n"
+              "Pass --write if that is what you want. For real data instead:\n"
+              "  python scripts/fetch_cables.py --area baltic   # real cable geometry\n"
+              "  python -m grapnel.pipeline                     # live AIS\n"
+              "  python scripts/bootstrap.py --days 1           # real historical detections\n")
+        return 1
+
     cfg = Config.load()
     cfg.use_telegeography = False
     routes = route_objects()
@@ -249,4 +264,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)

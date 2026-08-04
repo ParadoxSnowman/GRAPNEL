@@ -6,6 +6,32 @@ A grapnel is the tool used to hook a cable off the seabed — for repair, or oth
 
 ---
 
+## What is real and what is not
+
+**Real, shipped in the repo:** cable geometry for the Baltic — 48 routes including C-Lion1, BCS East-West Interlink, Sweden–Estonia (EE-S 1), Finland–Estonia 2 and 3, NordBalt, Eastern Light. Every cable named in the incident record. Loaded from `data/cables/`, no network call.
+
+**Real, one command away:** AIS. `python -m grapnel.pipeline` for the live Finnish feed, `python scripts/bootstrap.py --days 1` for real historical Danish archives and real detections.
+
+**Synthetic, opt-in only:** `scripts/make_demo.py --write`. It refuses to run without the flag, because shipping fabricated data as a site's default state makes a broken deployment indistinguishable from a working one.
+
+A deployment with cables but no AIS says so on the map in as many words. It does not quietly look finished.
+
+### What real cable data immediately proved
+
+Corridor geometry checked against five documented incident positions:
+
+| Incident | Nearest cable in the data | Distance |
+|---|---|---|
+| Fitburg / Elisa, Gulf of Finland | Finland Estonia Connection | 2.9 km — in corridor |
+| Eagle S / Estlink 2 | Eastern Light | 0.9 km — in corridor |
+| Yi Peng 3 / C-Lion1, off Öland | NordBalt | 24.1 km — miss |
+| Vezhen / Ventspils–Gotland | BCS East-West Interlink | 16.3 km — miss |
+| **Arbitrary open-water control point** | C-Lion1 | **7.0 km** |
+
+The control point — chosen at random in the central Baltic, with no incident anywhere near it — sits closer to C-Lion1 than the actual C-Lion1 incident does. Two errors compound: display geometry is off by tens of kilometres, and press-derived incident coordinates are off by another 10–30 km.
+
+This is not a bug to fix. It is the measurement that justifies the entire confidence architecture: **display-grade geometry cannot support attribution, and the code caps it at LOW for exactly this reason.** Load charted ENC `CBLSUB` data to lift that ceiling. Until you do, treat every hit as a pointer to go look, never as a finding.
+
 ## Read this before anything else
 
 **This tool cannot detect cable tapping.** Tapping is conducted from submarines and ROVs that do not transmit AIS. A mothership loitering overhead is indistinguishable from a research vessel doing legitimate survey work, and the actual intercept happens hundreds of metres below the surface where no civilian sensor reaches. Anyone who tells you an AIS map detects taps is selling something.
@@ -101,12 +127,24 @@ Terrestrial AIS reaches roughly 40–70 nm from a receiver. **A gap in a coastal
 git clone https://github.com/YOURNAME/grapnel && cd grapnel
 pip install -r requirements.txt
 
-python scripts/make_demo.py        # synthetic data, exercises every detector
-python scripts/bootstrap.py        # real detections from the DMA archive
-python -m grapnel.pipeline -v      # live feed: vessels now, detections as history builds
-python -m pytest tests/            # regression suite
+python scripts/doctor.py                # diagnose before anything else
+python -m grapnel.pipeline -v           # live AIS: vessels now, detections as history builds
+python scripts/bootstrap.py --days 1    # real historical AIS, real detections immediately
+python -m pytest tests/                 # regression suite
 
 cd docs && python -m http.server 8000
+```
+
+Cable geometry ships with the repo. To refresh it or cover a different sea:
+
+```bash
+python scripts/fetch_cables.py --area baltic     # or gulf-of-finland, taiwan, irish-sea, north-sea
+```
+
+Synthetic data is opt-in and refuses to run without `--write`:
+
+```bash
+python scripts/make_demo.py --write     # FABRICATED vessels and cables
 ```
 
 Then open `http://localhost:8000`. Same files that Pages serves.

@@ -208,6 +208,12 @@ async function load() {
   state.detections = dets.detections || [];
   renderStats(dets);
 
+  // No vessels means no AIS has been ingested. Say so plainly rather than
+  // letting real cable geometry imply the tool is running.
+  if (!(vessels && (vessels.features || []).length)) {
+    state.noAis = true;
+  }
+
   const notes = [];
   if (dets.demo) notes.push('<b>Synthetic demo data.</b> ' + esc(dets.demo_notice || ''));
   for (const w of (dets.warnings || [])) notes.push(esc(w));
@@ -220,6 +226,16 @@ async function load() {
   map.getSource('detections').setData(featureCollection());
   renderFilters();
   renderList();
+  if (state.noAis) {
+    $('list').innerHTML = '<div class="empty">'
+      + '<b>Cable geometry is loaded. No AIS ingested yet.</b><br><br>'
+      + 'The routes on the map are real. There are no vessels because no AIS source has run.<br><br>'
+      + '<code>python -m grapnel.pipeline</code> — live feed, vessels appear at once, '
+      + 'detections after a few hours of polling<br><br>'
+      + '<code>python scripts/bootstrap.py --days 1</code> — real historical AIS, '
+      + 'real detections immediately'
+      + '</div>';
+  }
 
   const bbox = dets.area && dets.area.bbox;
   if (bbox) map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 60, duration: 0 });

@@ -1,0 +1,14 @@
+{
+  "positional_class": "DISPLAY",
+  "source": "TeleGeography via community mirror (CC BY-NC-SA 3.0)",
+  "source_url": "https://raw.githubusercontent.com/lintaojlu/submarine_cable_information/master/web/public/api/v3/cable/cable-geo.json",
+  "bbox": [
+    9.0,
+    53.0,
+    30.5,
+    66.0
+  ],
+  "features": 43,
+  "warning": "Cartographic geometry drawn in Adobe Illustrator, NOT survey positions. Error against the laid route is routinely 10-50 km. Detections built on this are capped at LOW confidence by design.",
+  "licence": "CC BY-NC-SA 3.0 - attribution, non-commercial, share-alike"
+}

@@ -167,7 +167,8 @@ def routes_from_telegeography(geo: dict, meta: dict, bbox=None) -> list[CableRou
     return out
 
 
-def routes_from_enc_geojson(path: Path, source_label: str, stated_accuracy_m: float | None = None) -> list[CableRoute]:
+def routes_from_geojson(path: Path, source_label: str, positional_class: str = CHARTED,
+                        stated_accuracy_m: float | None = None, bbox=None) -> list[CableRoute]:
     """Load charted cable geometry exported from ENC data.
 
     Produce the input with GDAL against an S-57 cell:
@@ -190,10 +191,12 @@ def routes_from_enc_geojson(path: Path, source_label: str, stated_accuracy_m: fl
             continue
         name = props.get("OBJNAM") or props.get("name") or f"{source_label} CBLSUB {i}"
         for j, ls in enumerate(_explode(g)):
+            if bbox and not _intersects_bbox(ls, bbox):
+                continue
             out.append(CableRoute(
-                cable_id=f"enc:{source_label}:{i}:{j}",
+                cable_id=f"{'enc' if positional_class == CHARTED else 'geo'}:{source_label}:{i}:{j}",
                 name=str(name),
-                positional_class=CHARTED,
+                positional_class=positional_class,
                 source=source_label,
                 line=densify(ls, 2000.0),
                 stated_accuracy_m=stated_accuracy_m,
@@ -210,17 +213,40 @@ def load_routes(cfg, cache_dir: Path, refresh: bool = False) -> list[CableRoute]
     """
     routes: list[CableRoute] = []
 
-    # Anything dropped in data/cables/ is treated as charted geometry. This is
-    # the escape hatch: export ENC CBLSUB with ogr2ogr, drop the file in, and
-    # the tool never touches the network for cable data again.
+    # Anything dropped in data/cables/ is loaded before the network is touched.
+    #
+    # Each file may carry a sidecar <name>.meta.json declaring its
+    # positional_class. WITHOUT a sidecar we assume DISPLAY, not CHARTED. That
+    # default is deliberately pessimistic: mislabelling cartographic geometry as
+    # survey-grade would silently unlock HIGH confidence on routes that can be
+    # tens of kilometres from where the cable actually lies, which is precisely
+    # the failure this project is built to avoid. Claiming survey accuracy you
+    # do not have is worse than claiming none.
     local_dir = Path(cfg.data_dir) / "cables"
     if local_dir.exists():
         for f in sorted(local_dir.glob("*.geojson")) + sorted(local_dir.glob("*.json")):
-            routes.extend(routes_from_enc_geojson(f, f"local:{f.name}"))
+            if f.name.endswith(".meta.json"):
+                continue
+            side = f.with_suffix("").with_suffix(".meta.json") if f.suffix == ".geojson" else None
+            side = local_dir / (f.stem + ".meta.json")
+            pclass, label, acc = DISPLAY, f"local:{f.name}", None
+            if side.exists():
+                try:
+                    m = json.loads(side.read_text(encoding="utf-8"))
+                    pclass = CHARTED if str(m.get("positional_class", "")).upper() == CHARTED else DISPLAY
+                    label = m.get("source", label)
+                    acc = m.get("stated_accuracy_m")
+                except (json.JSONDecodeError, OSError) as exc:
+                    log.warning("unreadable sidecar %s (%s); treating %s as DISPLAY", side, exc, f.name)
+            found = routes_from_geojson(f, label, positional_class=pclass,
+                                        stated_accuracy_m=acc, bbox=cfg.bbox)
+            log.info("loaded %d routes from %s as %s", len(found), f.name, pclass)
+            routes.extend(found)
 
     for entry in cfg.charted_cable_files:
-        routes.extend(routes_from_enc_geojson(
-            Path(entry["path"]), entry.get("label", entry["path"]), entry.get("stated_accuracy_m")))
+        routes.extend(routes_from_geojson(
+            Path(entry["path"]), entry.get("label", entry["path"]),
+            positional_class=CHARTED, stated_accuracy_m=entry.get("stated_accuracy_m")))
 
     if cfg.use_telegeography:
         try:
