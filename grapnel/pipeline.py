@@ -199,7 +199,8 @@ def build_vessel_layer(positions: pd.DataFrame, static: pd.DataFrame, index, rou
     return {"type": "FeatureCollection", "features": feats}, watch
 
 
-def publish(cfg: Config, routes, detections, faults, positions, static, window_start, window_end) -> None:
+def publish(cfg: Config, routes, detections, faults, positions, static, window_start, window_end,
+            warnings=None) -> None:
     """Write everything the static site reads. No server, no database."""
     out = Path(cfg.site_data_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -262,6 +263,7 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
                 "window": {"start": window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                            "end": window_end.strftime("%Y-%m-%dT%H:%M:%SZ")},
                 "area": {"name": cfg.name, "bbox": list(cfg.bbox)},
+                "warnings": list(warnings or []),
                 "counts": {
                     "detections": len(detections),
                     "vessels_observed": int(positions["mmsi"].nunique()) if not positions.empty else 0,
@@ -297,10 +299,20 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
     now = dt.datetime.now(dt.timezone.utc)
     window_start = now - dt.timedelta(days=window_days)
 
+    warnings: list[str] = []
     routes = cables.load_routes(cfg, Path(cfg.cache_dir), refresh=refresh_cables)
     if not routes:
-        log.error("no cable routes loaded - nothing to detect against")
-        return 1
+        # Degrade, do not die. Losing the cable layer costs us detection, but
+        # the live vessel layer still works and is still worth publishing.
+        # Bailing here turns one upstream hiccup into a completely blank map
+        # with no explanation, which is the worst possible failure mode for a
+        # monitoring tool: indistinguishable from "nothing is happening".
+        msg = ("No cable geometry available, so no corridors and no detections. "
+               "The vessel layer below is still live. Fix by seeding data/cables/ "
+               "with ENC CBLSUB GeoJSON, or re-running with --refresh-cables once "
+               "the upstream is reachable.")
+        log.error(msg)
+        warnings.append(msg)
 
     # Pull whatever is on the wire now and fold it into the archive, then run
     # detection over the whole retained window rather than only the new rows.
@@ -352,7 +364,13 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
     faults += outages.load_manual_faults(Path(cfg.cache_dir).parent / "config" / "faults.json")
     dets = outages.corroborate(dets, faults)
 
-    publish(cfg, routes, dets, faults, positions, static, window_start, now)
+    if not positions.empty and n_vessels and per_vessel < 3:
+        warnings.append(
+            f"Archive holds only {per_vessel:.1f} fixes per vessel. Detectors need a track, not a "
+            "snapshot, so few or no detections will fire until it fills - roughly three hours of "
+            "polling. The vessel layer and corridor watchlist are unaffected.")
+
+    publish(cfg, routes, dets, faults, positions, static, window_start, now, warnings=warnings)
     return 0
 
 

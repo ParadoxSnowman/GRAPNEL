@@ -126,6 +126,16 @@ The site is plain static files — no build step, no framework, no server. `docs
 
 Everything is relative-path, so the `/grapnel/` subpath works with no config.
 
+### If runs sit in "queued" forever
+
+Different symptom from the button being missing, and it has different causes.
+
+**Concurrency deadlock.** If a group is set with `cancel-in-progress: false` and any earlier run hangs, every later run — including manual reruns — queues behind it indefinitely with no error. A `deploy` job waiting on an unconfigured `github-pages` environment is the classic way to hang. The shipped workflow uses `cancel-in-progress: true` and `timeout-minutes` on every job specifically to make this impossible. Cancel any stuck runs in the Actions tab before the fix can take effect.
+
+**Billing.** Settings → Billing → Plans and usage. A private repo out of its 2,000 free monthly minutes, or an account with a spending limit of zero, queues jobs rather than failing them. **Making the repo public removes the limit entirely** — standard runners are free and unmetered for public repos, and this project is meant to be public anyway.
+
+**Runner backlog.** Rare, and it resolves itself. Check <https://www.githubstatus.com>.
+
 ### If the workflow will not run
 
 Work down this list; the first item catches most people.
@@ -159,12 +169,32 @@ python -c "import yaml;yaml.safe_load(open('.github/workflows/monitor.yml'));pri
 
 ### Getting the site up without Actions at all
 
-If you just want the map live now, use branch mode. It needs no workflow:
+Branch mode is the **default** and needs no workflow at all:
 
-1. Settings → Pages → Source: **Deploy from a branch**, branch `main`, folder `/docs`
-2. Settings → Secrets and variables → Actions → Variables → new variable `PAGES_MODE` = `branch`
+**Settings → Pages → Source: Deploy from a branch**, branch `main`, folder `/docs`.
 
-The site goes live from the committed contents of `docs/` within a minute or two, showing whatever data is checked in. The `PAGES_MODE` variable makes the workflow skip its deploy job (which would fail in branch mode) and rely on its commit instead. Switch back by deleting the variable and setting Source to GitHub Actions.
+Live within a minute or two off whatever is committed in `docs/`. The workflow only commits data; nothing about the site depends on Actions succeeding. Artifact deploy is available if you want it — set repo variable `PAGES_MODE` = `actions` and switch Source to "GitHub Actions" — but it is opt-in precisely because it adds an environment, an OIDC token and a deploy job, every one of which is a way for the run to hang.
+
+### Preflight
+
+Before blaming the detectors:
+
+```bash
+python scripts/doctor.py
+```
+
+Checks config, whether your bounding box actually overlaps each source's coverage (the most common cause of a legitimately empty map), reachability of every endpoint, whether the cable layer loaded, archive depth, and whether what is published is real or still the demo. It runs first in the workflow too, so a misconfiguration is legible on the run page rather than buried in the pipeline log.
+
+### Degraded operation
+
+If the cable layer cannot be fetched, the pipeline no longer aborts. It publishes the live vessel layer with a warning banner explaining that corridors and detections are unavailable. Losing detection is bad; a completely blank map with no explanation is worse, because it is indistinguishable from "nothing is happening".
+
+To remove the network dependency entirely, drop ENC GeoJSON into `data/cables/` — anything there is loaded as charted geometry before any remote source is touched:
+
+```bash
+mkdir -p data/cables
+ogr2ogr -f GeoJSON data/cables/fi_cblsub.geojson /path/to/ENC_ROOT/FI5xxxxx.000 CBLSUB
+```
 
 `monitor.yml` runs every 30 minutes: restores the AIS archive from the Actions cache, polls the feed, detects, writes `docs/data/`, then uploads and deploys `docs/` as the Pages artifact. Each run writes a summary table of detections to the Actions run page, so you can triage from the Actions tab without opening the site.
 

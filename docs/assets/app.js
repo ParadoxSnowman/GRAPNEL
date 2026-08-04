@@ -208,10 +208,13 @@ async function load() {
   state.detections = dets.detections || [];
   renderStats(dets);
 
-  if (dets.demo) {
+  const notes = [];
+  if (dets.demo) notes.push('<b>Synthetic demo data.</b> ' + esc(dets.demo_notice || ''));
+  for (const w of (dets.warnings || [])) notes.push(esc(w));
+  if (notes.length) {
     const b = $('banner');
     b.hidden = false;
-    b.innerHTML = '<b>Synthetic demo data.</b> ' + esc(dets.demo_notice || '');
+    b.innerHTML = notes.join('<br>');
   }
 
   map.getSource('detections').setData(featureCollection());

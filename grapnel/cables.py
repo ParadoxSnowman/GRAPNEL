@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -110,10 +111,26 @@ def fetch_telegeography(cache_dir: Path, refresh: bool = False) -> tuple[dict, d
     for path, url in ((geo_path, TELEGEOGRAPHY_CABLE_GEO), (meta_path, TELEGEOGRAPHY_CABLE_META)):
         if path.exists() and not refresh:
             continue
-        log.info("fetching %s", url)
-        r = requests.get(url, timeout=60, headers={"User-Agent": "grapnel/0.1"})
-        r.raise_for_status()
-        path.write_text(r.text, encoding="utf-8")
+        # Retry with backoff. This endpoint is a plain CDN-fronted JSON file and
+        # transient 403/429/5xx are common; a single attempt makes the whole
+        # pipeline hostage to one bad moment. Once fetched it is cached, and the
+        # cache lives in the Actions cache, so this runs rarely in practice.
+        last = None
+        for attempt in range(3):
+            try:
+                r = requests.get(url, timeout=60, headers={
+                    "User-Agent": "grapnel/0.1 (open-source cable monitoring; +github)",
+                    "Accept": "application/json,*/*",
+                })
+                r.raise_for_status()
+                path.write_text(r.text, encoding="utf-8")
+                break
+            except requests.RequestException as exc:
+                last = exc
+                log.warning("cable fetch attempt %d/3 failed: %s", attempt + 1, exc)
+                time.sleep(2 ** attempt)
+        else:
+            raise last if last else RuntimeError("cable fetch failed")
 
     geo = json.loads(geo_path.read_text(encoding="utf-8"))
     try:
@@ -185,8 +202,21 @@ def routes_from_enc_geojson(path: Path, source_label: str, stated_accuracy_m: fl
 
 
 def load_routes(cfg, cache_dir: Path, refresh: bool = False) -> list[CableRoute]:
-    """Assemble the route set for the configured area of interest."""
+    """Assemble the route set for the configured area of interest.
+
+    Order matters: local files first, network last. A deployment seeded with
+    charted geometry on disk keeps working when every remote source is down,
+    which is the state you want a monitoring tool to degrade into.
+    """
     routes: list[CableRoute] = []
+
+    # Anything dropped in data/cables/ is treated as charted geometry. This is
+    # the escape hatch: export ENC CBLSUB with ogr2ogr, drop the file in, and
+    # the tool never touches the network for cable data again.
+    local_dir = Path(cfg.data_dir) / "cables"
+    if local_dir.exists():
+        for f in sorted(local_dir.glob("*.geojson")) + sorted(local_dir.glob("*.json")):
+            routes.extend(routes_from_enc_geojson(f, f"local:{f.name}"))
 
     for entry in cfg.charted_cable_files:
         routes.extend(routes_from_enc_geojson(
