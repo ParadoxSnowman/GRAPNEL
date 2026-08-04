@@ -1,0 +1,8 @@
+.cache/
+data/positions/
+data/static/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store

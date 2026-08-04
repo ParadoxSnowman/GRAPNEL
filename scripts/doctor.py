@@ -105,6 +105,35 @@ def main() -> int:
               "The archive falls back to gzipped CSV. Works, but slower and larger. "
               "pip install pyarrow")
 
+    # -------------------------------------------------------------- AIS auth
+    # Checked before anything else touches the network, because a missing key
+    # produces zero vessels and no exception, which is indistinguishable from
+    # an empty sea.
+    try:
+        from grapnel.config import Config as _C
+        srcs = _C.load().sources
+    except Exception:
+        srcs = []
+    if "aisstream" in srcs:
+        key = os.environ.get("AISSTREAM_API_KEY", "")
+        if not key:
+            check(BAD, "AISSTREAM_API_KEY is not set",
+                  "The aisstream source cannot connect, so zero vessels will be collected. "
+                  "In GitHub Actions a repository secret is NOT an ambient environment "
+                  "variable - the workflow step must map it:\n"
+                  "             env:\n"
+                  "               AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}")
+        else:
+            check(OK, "AISSTREAM_API_KEY present", "%d characters, ends %s" % (len(key), key[-4:]))
+        try:
+            import websockets
+            check(OK, "websockets %s" % getattr(websockets, "__version__", "?"))
+        except ImportError:
+            check(BAD, "websockets is not installed",
+                  "aisstream is a WebSocket feed and cannot run without it. "
+                  "pip install websockets, and make sure requirements.txt in your repo "
+                  "includes it.")
+
     # ---------------------------------------------------------------- config
     try:
         from grapnel.config import Config

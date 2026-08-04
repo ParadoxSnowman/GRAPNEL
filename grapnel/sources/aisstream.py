@@ -114,8 +114,14 @@ class AISStreamSource(AISSource):
             log.error("aisstream needs the 'websockets' package: pip install websockets")
             return [], []
         if not self.api_key:
-            log.error("AISSTREAM_API_KEY is not set. Get a free key at https://aisstream.io "
-                      "and export it, or add it as a GitHub Actions secret.")
+            log.error(
+                "AISSTREAM_API_KEY is empty, so no AIS can be collected.\n"
+                "  Local:   export AISSTREAM_API_KEY=your_key\n"
+                "  Actions: adding the repository secret is NOT enough - secrets are not\n"
+                "           ambient environment variables. The step must map it:\n"
+                "               env:\n"
+                "                 AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}\n"
+                "  Free key: https://aisstream.io")
             return [], []
 
         minx, miny, maxx, maxy = bbox
@@ -126,12 +132,18 @@ class AISStreamSource(AISSource):
         async def run():
             import websockets
 
-            positions, statics = [], []
+            positions, statics, errors = [], [], []
             deadline = asyncio.get_event_loop().time() + self.collect_seconds
             try:
                 async with websockets.connect(ENDPOINT, ping_interval=20, close_timeout=5) as ws:
+                    # Their published examples disagree on the casing of the
+                    # key field - the JSON reference says "APIKey", the
+                    # JavaScript sample says "Apikey". Send both; the server
+                    # ignores the one it does not recognise, and guessing wrong
+                    # costs a silent disconnect three seconds later.
                     await ws.send(json.dumps({
                         "APIKey": self.api_key,
+                        "Apikey": self.api_key,
                         "BoundingBoxes": boxes,
                         "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
                     }))
@@ -147,14 +159,33 @@ class AISStreamSource(AISSource):
                             msg = json.loads(raw)
                         except (json.JSONDecodeError, TypeError):
                             continue
+                        # The server reports auth and subscription problems as
+                        # plain messages, not as a socket error, so they have to
+                        # be read out or they vanish.
+                        if isinstance(msg, dict) and ("error" in msg or "Error" in msg):
+                            errors.append(str(msg.get("error") or msg.get("Error")))
+                            continue
                         kind = msg.get("MessageType")
                         if kind == "PositionReport":
                             positions.append(msg)
                         elif kind == "ShipStaticData":
                             statics.append(msg)
             except Exception as exc:
-                # A dropped socket mid-collection still leaves usable data.
-                log.warning("aisstream stream ended early: %s: %s", type(exc).__name__, exc)
+                # A dropped socket mid-collection still leaves usable data, but
+                # an immediate close almost always means the key was rejected.
+                elapsed = self.collect_seconds - max(0.0, deadline - asyncio.get_event_loop().time())
+                if not positions and elapsed < 10:
+                    log.error("aisstream closed the connection after %.1fs with no data: %s: %s. "
+                              "That is the signature of a rejected API key. Verify the key at "
+                              "https://aisstream.io and, in GitHub Actions, that the workflow step "
+                              "maps it: env: AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}",
+                              elapsed, type(exc).__name__, exc)
+                else:
+                    log.warning("aisstream stream ended early after %.1fs with %d positions: %s: %s",
+                                elapsed, len(positions), type(exc).__name__, exc)
+            if errors:
+                for e in dict.fromkeys(errors[:5]):
+                    log.error("aisstream server error: %s", e)
             return positions, statics
 
         try:
@@ -200,7 +231,9 @@ class AISStreamSource(AISSource):
             })
 
         if not rows:
-            log.warning("aisstream returned no usable positions")
+            log.error("aisstream returned no usable positions from %d raw messages. "
+                      "If raw messages is also 0, the connection was rejected or the "
+                      "bounding box covers no covered water.", len(raw_pos))
             return empty_positions()
 
         df = pd.DataFrame(rows).drop_duplicates(subset=["mmsi", "ts"])
