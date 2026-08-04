@@ -94,3 +94,102 @@ Free ENC sources: NOAA (US), Traficom (FI), DMA (DK), Sjöfartsverket (SE), Tran
 Terrestrial AIS reaches roughly 40–70 nm from a receiver. **A gap in a coastal feed is not evidence a transponder was switched off** — the vessel may simply have sailed out of range. This is why the Baltic, North Sea, Irish Sea and Taiwan Strait are the useful theatres and the mid-ocean is not.
 
 ---
+
+## Running it
+
+```bash
+git clone https://github.com/YOURNAME/grapnel && cd grapnel
+pip install -r requirements.txt
+
+python scripts/make_demo.py        # synthetic data, exercises every detector
+python scripts/bootstrap.py        # real detections from the DMA archive
+python -m grapnel.pipeline -v      # live feed: vessels now, detections as history builds
+python -m pytest tests/            # regression suite
+
+cd docs && python -m http.server 8000
+```
+
+Then open `http://localhost:8000`. Same files that Pages serves.
+
+The demo generates fabricated vessels on fabricated cables — including 48 background hulls, because a demo showing only detections teaches the wrong base rate — and stamps the payload so the UI shouts about it. Delete `docs/data/` before publishing anything real.
+
+A run that returns zero positions from every source keeps the previously published payload and exits non-zero, rather than wiping a working map and making a transport failure look like a quiet day.
+
+## Deploying to GitHub Pages
+
+The site is plain static files — no build step, no framework, no server. `docs/` is the site root.
+
+1. Push the repo to GitHub. It must be **public** for free Actions minutes on a schedule.
+2. **Settings → Pages → Source: `GitHub Actions`.** Not "Deploy from a branch" — branch mode serves whatever is committed and ignores the artifact the workflow uploads, so your data would freeze at whatever you last pushed by hand.
+3. **Actions → monitor → Run workflow** to seed it. The schedule alone can take up to an hour to fire the first time.
+4. Live at `https://YOURNAME.github.io/grapnel/`.
+
+Everything is relative-path, so the `/grapnel/` subpath works with no config.
+
+### If the workflow will not run
+
+Work down this list; the first item catches most people.
+
+**1. Is the workflow actually in the repo?**
+
+```bash
+git ls-files .github
+```
+
+If that prints nothing, `.github/` never got committed. Extracting a zip and dragging files into GitHub's web uploader silently drops dot-directories, and macOS Finder and most GUI unzip tools hide them by default. Fix:
+
+```bash
+git add -f .github .gitignore docs/.nojekyll
+git commit -m "add workflow" && git push
+```
+
+**2. Is it on the default branch?** The *Run workflow* button only appears for workflows on the repo's default branch. If you pushed to `master` and the default is `main` (or vice versa), there is no button. Check with `git branch --show-current` against Settings → Branches.
+
+**3. Are Actions enabled?** Settings → Actions → General → "Allow all actions and reusable workflows".
+
+**4. Are workflow permissions read/write?** Settings → Actions → General → Workflow permissions → "Read and write". Organisation repos default to read-only, which lets the run start but fails the commit step. The workflow prints that hint rather than dying silently.
+
+**5. Scheduled runs only.** `schedule` never fires on a fork, and GitHub disables schedules on repos with no activity for 60 days. Cron is also best-effort and routinely runs late under load — use *Run workflow* to test, never the clock.
+
+**6. YAML errors make workflows vanish entirely.** A malformed workflow does not appear in the Actions tab at all, with no error shown. Validate before pushing:
+
+```bash
+python -c "import yaml;yaml.safe_load(open('.github/workflows/monitor.yml'));print('ok')"
+```
+
+### Getting the site up without Actions at all
+
+If you just want the map live now, use branch mode. It needs no workflow:
+
+1. Settings → Pages → Source: **Deploy from a branch**, branch `main`, folder `/docs`
+2. Settings → Secrets and variables → Actions → Variables → new variable `PAGES_MODE` = `branch`
+
+The site goes live from the committed contents of `docs/` within a minute or two, showing whatever data is checked in. The `PAGES_MODE` variable makes the workflow skip its deploy job (which would fail in branch mode) and rely on its commit instead. Switch back by deleting the variable and setting Source to GitHub Actions.
+
+`monitor.yml` runs every 30 minutes: restores the AIS archive from the Actions cache, polls the feed, detects, writes `docs/data/`, then uploads and deploys `docs/` as the Pages artifact. Each run writes a summary table of detections to the Actions run page, so you can triage from the Actions tab without opening the site.
+
+**Why one workflow and not two.** The obvious design is a monitor job that commits data plus a Pages job triggered on push. It does not work: a push made with `GITHUB_TOKEN` does not trigger other workflows, because GitHub blocks that to prevent recursion. The site would deploy once, then go stale forever while every run still reported green. Deploying inline is the only arrangement that stays live.
+
+**Commits.** A run commits `docs/data` only when the detection set actually moved. At this cadence most runs are byte-identical apart from a timestamp, so hashing the meaningful content and gating on that avoids 48 commits a day of noise while still giving branch-mode Pages the commit it needs — and leaving a real audit trail of what was asserted and when, which matters when the payload names actual vessels.
+
+**The archive is the fragile part.** Digitraffic serves current positions only, so **the archive is exactly as dense as your polling interval** and anything not captured is gone permanently. It lives in the Actions cache, which GitHub evicts LRU past 10 GB and drops entirely after 7 days without access — fine while the schedule runs, fatal if you disable the workflow for a week. If you need durable history, back the archive with a `data` orphan branch or an S3/R2 bucket instead. Everything before you started polling has to come from DMA.
+
+## Tuning
+
+Thresholds live in `config/settings.yml` and are seeded from Global Fishing Watch's published parameters where they overlap, so the numbers are defensible against an existing baseline rather than invented.
+
+Two design decisions worth understanding before you change them:
+
+**Drag is scored over the whole contiguous slow run, not the corridor slice.** In-corridor distance is bounded by corridor width for a perpendicular crossing — 6 km for a 3 km corridor — no matter how far the anchor was actually dragged.
+
+**The transit baseline is the vessel's own upper-quartile moving speed.** If a drag dominates the observation window then the median *is* the drag, and comparing the anomaly against itself gives a ratio of 1.0 and silently suppresses the detection. When no usable baseline exists — a hull slow throughout the window — the detector falls back to a course-hold test and is capped at LOW, because a small fishing vessel whose normal working speed is two knots must not be flagged.
+
+## Contributing
+
+Adding an incident: append to `config/incidents.json` with at least one source URL and open a PR. Claims sourced only to social media are rejected. Coordinates are approximate and must be marked as such.
+
+Adding a detector: it must emit its thresholds and a `benign_explanations` list in `evidence`. If you cannot write down what innocent behaviour looks identical to yours, the detector is not ready.
+
+## Licence
+
+Code is MIT. **Data is not** — see the note in [LICENSE](LICENSE). The TeleGeography layer is CC BY-NC-SA 3.0, and redistributing anything derived from it inherits non-commercial and share-alike.
