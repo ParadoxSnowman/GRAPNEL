@@ -65,6 +65,8 @@ jobs:
       # lines into the pipeline log.
       - name: Preflight
         continue-on-error: true
+        env:
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
         run: python scripts/doctor.py --ci
 
       - name: Restore AIS archive
@@ -81,6 +83,13 @@ jobs:
         id: pipeline
         continue-on-error: true
         timeout-minutes: 15
+        env:
+          # Secrets are NOT ambient in the runner environment. Without this
+          # mapping the process sees an empty key, the AIS source returns
+          # nothing, and the run reports a green preflight with zero vessels -
+          # which looks like "quiet ocean" rather than "misconfigured".
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
+          AISSTREAM_SECONDS: ${{ vars.AISSTREAM_SECONDS || '180' }}
         run: |
           python -m grapnel.pipeline \
             --window-days "${{ inputs.window_days || 7 }}" \
