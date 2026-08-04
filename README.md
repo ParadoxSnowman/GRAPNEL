@@ -6,6 +6,24 @@ A grapnel is the tool used to hook a cable off the seabed — for repair, or oth
 
 ---
 
+## Publishing the map (no Actions, no Python, ~2 minutes)
+
+`docs/` is a finished static site with the entire global cable dataset already committed. Nothing needs to build. Nothing needs to run.
+
+```bash
+git add -A && git commit -m "grapnel" && git push
+```
+
+Then **Settings → Pages → Source: Deploy from a branch → `main` → `/docs` → Save.**
+
+Live at `https://YOURNAME.github.io/REPO/` within a minute or two, showing 503 cables and 1,335 landing points.
+
+**If the repo is private, stop here and make it public.** On GitHub Free, Pages is unavailable for private repos and Actions minutes are metered — a private repo with an exhausted allowance or a zero spending limit queues jobs forever rather than failing them. That one fact explains both "Pages won't turn on" and "runs sit queued" at the same time. Settings → General → Danger Zone → Change visibility.
+
+The `monitor` workflow is **optional**. It refreshes AIS data on a schedule. The map publishes and works without it ever running once.
+
+---
+
 ## What is real and what is not
 
 **Real, shipped in the repo, visible with zero setup:** every submarine cable on earth. 503 systems, 1,378 route segments, 1,335 landing points. C-Lion1, 2Africa, MAREA, Grace Hopper, the lot. Push the repo, turn on Pages, and you have a working global cable map before you install Python.
