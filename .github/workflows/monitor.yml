@@ -1,0 +1,158 @@
+name: monitor
+
+# Polls AIS, runs detection, publishes the site.
+#
+# DEFAULT MODE IS BRANCH DEPLOY, deliberately. The workflow just commits
+# docs/data and GitHub Pages serves the branch. No environment, no OIDC, no
+# deploy job, nothing to configure beyond one dropdown. Artifact deploy is
+# strictly better in theory and has far more surface to get wrong in practice,
+# so it is opt-in via the PAGES_MODE variable rather than the default.
+#
+#   Settings -> Pages -> Source: "Deploy from a branch", main, /docs
+#
+# For artifact deploy instead:
+#   Settings -> Pages -> Source: "GitHub Actions"
+#   Settings -> Secrets and variables -> Actions -> Variables:
+#       PAGES_MODE = actions
+
+on:
+  workflow_dispatch:
+    inputs:
+      window_days:
+        description: Detection window in days
+        default: '7'
+      refresh_cables:
+        description: Re-download the cable layer
+        type: boolean
+        default: false
+  schedule:
+    - cron: '5,35 * * * *'
+
+# Least privilege at the top. The optional deploy job grants itself the extra
+# scopes it needs; nothing else in the run can touch Pages or mint an OIDC token.
+permissions:
+  contents: write
+
+# cancel-in-progress MUST be true. With it false, one hung run - a deploy job
+# waiting on an unconfigured environment is the classic case - blocks the group
+# and every later run, including manual reruns, sits queued forever with no
+# error anywhere. Runs here take a couple of minutes and losing one poll is
+# nothing next to a permanently wedged queue.
+concurrency:
+  group: monitor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Without this a wedged job holds a runner for GitHub's 6 hour default.
+    timeout-minutes: 25
+    outputs:
+      detections: ${{ steps.report.outputs.detections }}
+      changed: ${{ steps.report.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Runs first and never fails the build: if something is misconfigured you
+      # get a readable diagnosis on the run page instead of a stack trace 400
+      # lines into the pipeline log.
+      - name: Preflight
+        continue-on-error: true
+        run: python scripts/doctor.py --ci
+
+      - name: Restore AIS archive
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/positions
+            data/static
+            .cache
+          key: grapnel-archive-${{ github.run_id }}
+          restore-keys: grapnel-archive-
+
+      - name: Run pipeline
+        id: pipeline
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          python -m grapnel.pipeline \
+            --window-days "${{ inputs.window_days || 7 }}" \
+            ${{ inputs.refresh_cables && '--refresh-cables' || '' }} \
+            --verbose
+
+      - name: Prune archive
+        if: always()
+        run: |
+          find data/positions -maxdepth 1 -type d -name 'date=*' -mtime +45 -exec rm -rf {} + 2>/dev/null || true
+          ls -1 data/static/*.parquet 2>/dev/null | head -n -400 | xargs -r rm -f
+
+      - name: Save AIS archive
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            data/positions
+            data/static
+            .cache
+          key: grapnel-archive-${{ github.run_id }}
+
+      - name: Report
+        id: report
+        if: always()
+        run: python scripts/ci_report.py
+
+      # Committed only when the detection set actually moved. Most runs at this
+      # cadence differ solely in a timestamp, and committing those is 48 commits
+      # a day of noise. [skip ci] is belt and braces: a GITHUB_TOKEN push cannot
+      # trigger a workflow anyway.
+      - name: Commit published data
+        if: steps.report.outputs.changed == 'true'
+        run: |
+          git config user.name  'grapnel-bot'
+          git config user.email 'grapnel-bot@users.noreply.github.com'
+          git add docs/data
+          if git diff --staged --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "detections: ${{ steps.report.outputs.detections }} [skip ci]"
+            git push || {
+              echo "::error::Push rejected. Settings > Actions > General > Workflow permissions must be 'Read and write'."
+              exit 1
+            }
+          fi
+
+      - name: Surface pipeline failure
+        if: steps.pipeline.outcome == 'failure'
+        run: |
+          echo "::error::Pipeline failed. Previous payload kept; site still serves. See the Run pipeline step."
+          exit 1
+
+  # Opt-in only. Skipped entirely unless PAGES_MODE is set to 'actions', so an
+  # unconfigured Pages environment can never hang the run.
+  deploy:
+    needs: build
+    if: ${{ !cancelled() && vars.PAGES_MODE == 'actions' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
