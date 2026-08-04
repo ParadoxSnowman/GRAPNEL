@@ -115,14 +115,24 @@ def main() -> int:
     except Exception:
         srcs = []
     if "aisstream" in srcs:
-        key = os.environ.get("AISSTREAM_API_KEY", "")
-        if not key:
-            check(BAD, "AISSTREAM_API_KEY is not set",
-                  "The aisstream source cannot connect, so zero vessels will be collected. "
-                  "In GitHub Actions a repository secret is NOT an ambient environment "
-                  "variable - the workflow step must map it:\n"
-                  "             env:\n"
-                  "               AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}")
+        raw = os.environ.get("AISSTREAM_API_KEY")   # None vs "" is the whole diagnosis
+        key = (raw or "").strip()
+        in_ci = bool(os.environ.get("GITHUB_ACTIONS"))
+        if raw is None:
+            check(BAD, "AISSTREAM_API_KEY is not defined at all",
+                  ("The workflow step never mapped it. Adding the repository secret is not "
+                   "enough - secrets are not ambient environment variables. Add to the step:\n"
+                   "             env:\n"
+                   "               AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}"
+                   if in_ci else
+                   "Run: export AISSTREAM_API_KEY=your_key   (free key at https://aisstream.io)"))
+        elif not key:
+            check(BAD, "AISSTREAM_API_KEY is mapped but empty",
+                  "The workflow IS passing the variable, so the secret itself is the problem: "
+                  "it does not exist under that exact name, or it was saved somewhere the job "
+                  "cannot see. Check Settings > Secrets and variables > ACTIONS tab > "
+                  "REPOSITORY secrets (not Codespaces, not Dependabot, not Environment). "
+                  "The name is case-sensitive: AISSTREAM_API_KEY")
         else:
             check(OK, "AISSTREAM_API_KEY present", "%d characters, ends %s" % (len(key), key[-4:]))
         try:
