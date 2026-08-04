@@ -18,7 +18,7 @@ bbox: [-180.0, -90.0, 180.0, 90.0]
 #   north-sea-german:  [3.0, 53.0, 9.5, 56.0]
 
 sources:
-  - aisstream            # GLOBAL. Free key from https://aisstream.io -> AISSTREAM_API_KEY
+  - aisstream            # GLOBAL. Free key: https://aisstream.io -> AISSTREAM_API_KEY
   # - digitraffic        # Finnish waters only, no key needed
   # - dma                # free, historical, Danish waters; large downloads
 

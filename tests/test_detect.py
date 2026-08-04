@@ -185,3 +185,55 @@ def test_digitraffic_dimensions_and_sentinels():
     # 102.3 kn is the AIS "speed not available" sentinel, not a speed.
     assert _sog(102.3) is None
     assert _sog(10.7) == 10.7
+
+
+# ------------------------------------------------------------ track quality
+
+def test_mmsi_collision_is_excluded_not_reported_as_a_detection():
+    """Two hulls sharing an MMSI must produce no detection at all.
+
+    This is the common case in any aggregated feed, and the old code reported it
+    as `position_jump` in the same feed as anchor_drag - implying a cable threat
+    where there was only a duplicated transponder.
+    """
+    from grapnel.quality import PROBABLE_MMSI_COLLISION, assess
+    rows = []
+    for i in range(12):                       # alternates Baltic <-> Med
+        rows.append({"ts": T0 + dt.timedelta(minutes=20 * i), "mmsi": 777777777,
+                     "lat": 59.8 if i % 2 == 0 else 35.9,
+                     "lon": 24.8 if i % 2 == 0 else 14.5,
+                     "sog": 8.0, "cog": 90.0, "heading": 90.0,
+                     "nav_status": "Under way using engine", "source": "test"})
+    g = frame(rows)
+    q = assess(g)
+    assert q.verdict == PROBABLE_MMSI_COLLISION
+    assert q.usable_for_behaviour is False
+    assert not any(d.kind == "position_jump" for d in detect.run(g, [route()]))
+
+
+def test_corrupt_fix_cannot_manufacture_a_drag():
+    """A single teleport must not become a fabricated long, straight, slow run.
+
+    Two distant points always describe a straight line at a constant speed, so
+    an unsplit track hands anchor_drag a perfect signature built from nothing.
+    """
+    from grapnel.quality import split_on_impossible
+    rows = crossing(888888888, sog=2.0, n=30, span=0.10)
+    rows.append({"ts": rows[-1]["ts"] + dt.timedelta(minutes=4), "mmsi": 888888888,
+                 "lat": 59.85, "lon": 31.0,   # ~340 km in 4 minutes
+                 "sog": 2.0, "cog": 90.0, "heading": 90.0,
+                 "nav_status": "Under way using engine", "source": "test"})
+    rows += [dict(r, ts=r["ts"] + dt.timedelta(hours=3), lon=31.0 + (r["lon"] - 24.65))
+             for r in crossing(888888888, sog=2.0, n=30, span=0.10)]
+    g = frame(rows)
+    segs = list(split_on_impossible(g))
+    assert len(segs) >= 2, "track must be split at the impossible leg"
+    for d in detect.run(g, [route()]):
+        km = d.evidence.get("slow_run_distance_km")
+        if km is not None:
+            assert km < 100, f"fabricated {km} km run spanning a teleport"
+
+
+def test_clean_track_is_not_flagged():
+    from grapnel.quality import CLEAN, assess
+    assert assess(frame(crossing(999999999, sog=11.0))).verdict == CLEAN

@@ -89,6 +89,37 @@ What GRAPNEL observes is the threat that has actually been materialising in the 
 
 Detections are then **corroborated** against independently observed faults — operator notices, ENTSO-E interconnector capacity drops, IODA and RIPE Atlas connectivity signals. This join is the point of the project. A slow corridor transit alone is background noise; the same transit inside the window of a fault observed by an instrument that has no idea any vessel was present is a finding.
 
+## Track quality is not a detection
+
+`position_jump` used to sit in the detection feed. That was a design error and it is gone.
+
+An impossible-speed leg in an aggregated AIS feed is almost never about vessel behaviour:
+
+- **MMSI collision.** Two hulls transmitting the same MMSI. Endemic — factory-default transponders, cloned numbers, reused registrations. In a feed aggregating receivers worldwide, one MMSI in New York and the "same" one in Singapore is a certainty, not an anomaly. This is by far the most common cause.
+- **Decode and aggregation artefacts.** A corrupted sentence with a valid checksum, or out-of-order delivery across receivers.
+- **Actual GNSS spoofing.** Real and interesting, but rare beside the above — and it doesn't usually look like a jump. It looks like a vessel parked in an airport, or tracing circles.
+
+None of those threatens a cable. So jumps now go to `docs/data/track-quality.json` as a data-quality finding, and are used for something far more important: **splitting tracks before detection runs.**
+
+That is a correctness requirement, not tidiness. Two distant fixes always describe a straight line at a constant speed — so an unsplit track hands `anchor_drag` a flawless drag signature manufactured entirely out of the corruption. `test_corrupt_fix_cannot_manufacture_a_drag` pins that behaviour. Tracks assessed as MMSI collisions are excluded from behavioural detection altogether, because behaviour cannot be attributed to a hull when two hulls share the identifier.
+
+## Better free AIS
+
+| Source | Coverage | Key | What it uniquely gives |
+|---|---|---|---|
+| `aisstream` | Global coastal | free | Streaming, so real tracks on run one |
+| `gfw` | **Global incl. satellite** | free | **Distinguishes a switched-off transponder from a vessel over the horizon** |
+| `dma` | Danish waters, to 2006 | none | Dense historical archive; real detections immediately |
+| `digitraffic` | Finnish waters | none | Snapshot only |
+
+The Global Fishing Watch Events API is the largest free upgrade available, because it fuses satellite with terrestrial AIS. Our own `corridor_gap` detector cannot tell a transponder being switched off from a vessel sailing beyond coastal receiver range, and never claims to. GFW's AIS-off events are that assessment, made globally.
+
+```
+GFW_API_TOKEN=your_token python -m grapnel.pipeline
+```
+
+Free token at <https://globalfishingwatch.org/our-apis/>. Attribution required. Two honest limits: events lag roughly **72 hours**, so it is forensic rather than a tripwire; and GFW loitering requires ~20 nm from shore because the metric was built for fishing transshipment — which excludes exactly the shallow coastal water where cables are most exposed. It complements the local detectors offshore; it does not replace them inshore.
+
 ## Why a fresh deployment shows no detections (and what to do)
 
 A live AIS feed returns **one fix per vessel per poll**. Every detector needs a track, so a single poll can never produce a detection no matter how much traffic is out there. At the default 30-minute cadence a vessel has a usable track after roughly three hours in the area. This is correct behaviour and it looks exactly like a broken tool, so the map does not rely on detections to have something to show:

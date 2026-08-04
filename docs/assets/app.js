@@ -195,11 +195,11 @@ async function getJSON(name) {
 }
 
 async function load() {
-  const [dets, cables, corridors, incidents, vessels, watch, landings] = await Promise.all([
+  const [dets, cables, corridors, incidents, vessels, watch, landings, quality] = await Promise.all([
     getJSON('detections.json'), getJSON('cables.geojson'),
     getJSON('corridors.geojson'), getJSON('incidents.json'),
     getJSON('vessels.geojson'), getJSON('watchlist.json'),
-    getJSON('landing-points.geojson'),
+    getJSON('landing-points.geojson'), getJSON('track-quality.json'),
   ]);
 
   if (cables) map.getSource('cables').setData(cables);
@@ -208,6 +208,7 @@ async function load() {
   if (landings) map.getSource('landings').setData(landings);
   state.watchlist = (watch && watch.vessels) || [];
   state.watchNote = (watch && watch.note) || '';
+  state.quality = (quality && quality.tracks) || [];
 
   state.incidents = (incidents && incidents.incidents) || [];
   map.getSource('incidents').setData({
@@ -302,6 +303,7 @@ function renderStats(d) {
     cell('Detections', c.detections ?? 0)
     + cell('Vessels seen', c.vessels_observed ?? 0)
     + cell('In corridor', c.in_corridor_now ?? state.watchlist.length)
+    + cell('Bad tracks', state.quality ? state.quality.length : 0)
     + cell('Routes', `${c.routes_charted ?? 0}/${c.routes ?? 0}`)
     + cell('Updated', (d.generated_at || '').replace('T', ' ').replace('Z', 'Z'));
 }

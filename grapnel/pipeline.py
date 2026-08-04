@@ -205,7 +205,7 @@ def build_vessel_layer(positions: pd.DataFrame, static: pd.DataFrame, index, rou
 
 
 def publish(cfg: Config, routes, detections, faults, positions, static, window_start, window_end,
-            warnings=None) -> None:
+            warnings=None, track_quality=None) -> None:
     """Write everything the static site reads. No server, no database."""
     out = Path(cfg.site_data_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -307,6 +307,22 @@ def publish(cfg: Config, routes, detections, faults, positions, static, window_s
         encoding="utf-8",
     )
 
+    # Data-quality findings live in their own file, never in the detection feed.
+    # An MMSI with impossible legs is a broken or duplicated transponder, which
+    # is worth an analyst knowing and is not a threat to a cable.
+    (out / "track-quality.json").write_text(
+        json.dumps({
+            "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "count": len(track_quality or {}),
+            "note": ("Tracks containing legs no vessel could travel. Almost always two hulls "
+                     "sharing one MMSI, or a corrupted fix - not GNSS spoofing, and not a "
+                     "cable threat. Listed so you know which tracks not to trust. Tracks "
+                     "assessed as MMSI collisions are excluded from behavioural detection "
+                     "entirely, because behaviour cannot be attributed to a hull."),
+            "tracks": list((track_quality or {}).values()),
+        }, separators=(",", ":")),
+        encoding="utf-8")
+
     (out / "faults.json").write_text(
         json.dumps({"faults": [f.to_dict() for f in faults]}, separators=(",", ":")),
         encoding="utf-8",
@@ -384,8 +400,30 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
         log.error("no positions from any source and nothing previously published")
         return 2
 
-    dets = detect.run(positions, routes, cfg.thresholds)
+    track_quality: dict = {}
+    dets = detect.run(positions, routes, cfg.thresholds, quality_out=track_quality)
     dets = detect.flag_repeat_presence(dets)
+
+    # Global Fishing Watch: satellite-backed events. Optional, and the only
+    # source here that can tell a switched-off transponder from a vessel over
+    # the horizon, which no coastal feed can do.
+    if os.environ.get("GFW_API_TOKEN"):
+        try:
+            from .sources.gfw import GFWEvents, to_detections
+
+            gidx = detect.CorridorIndex(routes, cfg.thresholds.corridor_m)
+            events = GFWEvents().fetch(window_start, now, cfg.bbox)
+            gfw_dets = to_detections(events, routes, gidx, cfg.thresholds.corridor_m)
+            for d in gfw_dets:
+                d.detection_id = detect.hashlib.sha1(
+                    f"{d.kind}|{d.mmsi}|{d.cable_id}|{d.start_ts}".encode()).hexdigest()[:12]
+            dets.extend(gfw_dets)
+            log.info("added %d GFW-derived detections", len(gfw_dets))
+        except Exception as exc:
+            log.warning("GFW step failed (%s); continuing without it", exc)
+    else:
+        log.info("GFW_API_TOKEN not set; skipping satellite-backed events. "
+                 "Free token at https://globalfishingwatch.org/our-apis/")
 
     faults = outages.load_manual_faults(Path(cfg.data_dir) / "faults.json")
     faults += outages.load_manual_faults(Path(cfg.cache_dir).parent / "config" / "faults.json")
@@ -397,7 +435,8 @@ def run(cfg: Config, refresh_cables: bool = False, window_days: int | None = Non
             "snapshot, so few or no detections will fire until it fills - roughly three hours of "
             "polling. The vessel layer and corridor watchlist are unaffected.")
 
-    publish(cfg, routes, dets, faults, positions, static, window_start, now, warnings=warnings)
+    publish(cfg, routes, dets, faults, positions, static, window_start, now,
+            warnings=warnings, track_quality=track_quality)
     return 0
 
 

@@ -33,6 +33,7 @@ from shapely.geometry import Point
 from shapely.strtree import STRtree
 
 from .cables import CHARTED, CableRoute
+from .quality import assess, split_on_impossible
 from .geom import angular_diff, haversine_m, initial_bearing, track_stats
 
 log = logging.getLogger(__name__)
@@ -100,7 +101,9 @@ class Thresholds:
     reversals unless you require it to actually be making way."""
     survey_min_extent_m: float = 5000.0
 
-    jump_impossible_kn: float = 45.0
+    impossible_kn: float = 60.0
+    """Above this implied speed between fixes the leg is not achievable and the
+    track is split there. Generous on purpose: fast ferries touch 45 kn."""
 
     max_gap_for_continuity_s: float = 1800.0
     """Positions further apart than this start a new segment. A vessel that
@@ -548,48 +551,61 @@ def detect_corridor_gap(g, routes, index, th):
     return out
 
 
-# ------------------------------------------------------------------- spoof
 
-def detect_spoof_artifacts(g, th):
-    """Position jumps no hull can achieve.
 
-    Not cable-specific, but it belongs in the same pass: if a track contains
-    impossible legs, every behavioural statistic derived from it is suspect and
-    the analyst needs to know that before reading anything else.
-    """
-    out = []
-    if len(g) < 2:
-        return out
-    lat, lon, ts = g["lat"].values, g["lon"].values, g["ts"]
-    dtsec = ts.diff().dt.total_seconds().fillna(0.0).values
-    d = haversine_m(lat[:-1], lon[:-1], lat[1:], lon[1:])
-    with np.errstate(divide="ignore", invalid="ignore"):
-        kn = (d / 1852.0) / (dtsec[1:] / 3600.0)
-    for i in np.where(np.isfinite(kn) & (kn > th.jump_impossible_kn))[0]:
-        out.append(Detection(
-            detection_id="", kind="position_jump", mmsi=int(g["mmsi"].iloc[0]),
-            cable_id="", cable_name="", cable_positional_class="", cable_source="",
-            start_ts=_iso(ts.iloc[i]), end_ts=_iso(ts.iloc[i + 1]), duration_s=float(dtsec[i + 1]),
-            lat=round(float(lat[i + 1]), 5), lon=round(float(lon[i + 1]), 5),
-            confidence=CONFIDENCE_LOW, score=round(min(1.0, float(kn[i]) / 200.0), 3),
-            summary=f"Implied {kn[i]:.0f} kn between consecutive positions - not physically achievable.",
-            evidence={
-                "implied_speed_kn": round(float(kn[i]), 1),
-                "leg_km": round(float(d[i]) / 1000, 2),
-                "leg_seconds": float(dtsec[i + 1]),
-                "interpretation": ["GNSS spoofing in the operating area",
-                                   "two transponders sharing or alternating one MMSI",
-                                   "receiver or decoder error"],
-            },
-            track=_track_payload(g.iloc[max(0, i - 3): i + 4]),
-        ))
-    return out
+def _detect_segment(g, routes, index, survey_index, th, baseline, detections):
+    """Run every behavioural detector over one uncorrupted track segment."""
+    mask = index.mask(g["lon"].values, g["lat"].values)
+    smask = survey_index.mask(g["lon"].values, g["lat"].values)
+
+    detections.extend(detect_corridor_gap(g, routes, index, th))
+
+    # Drag is a property of a contiguous slow run, evaluated end to end. The
+    # corridor only decides whether that run is worth reporting. Scoring the
+    # corridor slice instead would bound distance by corridor width, which
+    # for a perpendicular crossing is twice the buffer no matter how far the
+    # anchor was actually dragged.
+    for srun in _slow_runs(g, th):
+        touched = set()
+        for lon_, lat_ in zip(srun["lon"].values, srun["lat"].values):
+            touched.update(index.hits(float(lon_), float(lat_)))
+        for ridx in sorted(touched):
+            inside = srun[index.distance_m(ridx, srun["lat"].values, srun["lon"].values) <= th.corridor_m]
+            in_m = float(track_stats(list(inside["ts"]), inside["lat"].values, inside["lon"].values,
+                                     inside["sog"].values, inside["cog"].values).distance_m) if len(inside) > 1 else 0.0
+            det = detect_anchor_drag(srun, routes[ridx], ridx, index, th, baseline, in_m)
+            if det:
+                detections.append(det)
+
+    for ridx, route in enumerate(routes):
+        if mask[ridx].any():
+            for part in _segments(g[mask[ridx]], th.max_gap_for_continuity_s):
+                if len(part) < 3:
+                    continue
+                det = detect_loiter(part, route, ridx, index, th)
+                if det:
+                    detections.append(det)
+
+        if smask[ridx].any():
+            for part in _segments(g[smask[ridx]], th.max_gap_for_continuity_s):
+                if len(part) < 12:
+                    continue
+                det = detect_survey_pattern(part, route, ridx, survey_index, th)
+                if det:
+                    detections.append(det)
 
 
 # --------------------------------------------------------------------- run
 
-def run(positions: pd.DataFrame, routes: list[CableRoute], th: Thresholds | None = None) -> list[Detection]:
-    """Run every detector over a canonical position frame."""
+def run(positions: pd.DataFrame, routes: list[CableRoute], th: Thresholds | None = None,
+        quality_out: dict | None = None) -> list[Detection]:
+    """Run every detector over a canonical position frame.
+
+    quality_out, if given, is filled with per-MMSI TrackQuality for every track
+    that had impossible legs. Those are data-quality findings, not detections,
+    and they are published separately so nobody mistakes a broken transponder
+    for a threat to a cable.
+    """
     th = th or Thresholds()
     if positions.empty or not routes:
         return []
@@ -598,9 +614,21 @@ def run(positions: pd.DataFrame, routes: list[CableRoute], th: Thresholds | None
     survey_index = CorridorIndex(routes, th.survey_buffer_m)
     detections: list[Detection] = []
 
+    quality = {}
     for _, g in positions.groupby("mmsi", sort=True):
         g = g.sort_values("ts").reset_index(drop=True)
         if len(g) < 2:
+            continue
+
+        # Quality before behaviour, always. A track with impossible legs will
+        # otherwise manufacture a perfect drag signature out of the corruption:
+        # two distant fixes always describe a straight line at a constant speed.
+        q = assess(g, th.impossible_kn)
+        if q.verdict != "CLEAN":
+            quality[int(g["mmsi"].iloc[0])] = q
+        if not q.usable_for_behaviour:
+            # Two hulls on one MMSI. Nothing observed here can be attributed to
+            # a vessel, so there is nothing honest to report about it.
             continue
 
         # The vessel's own transit speed. Deliberately the 75th percentile of
@@ -614,53 +642,33 @@ def run(positions: pd.DataFrame, routes: list[CableRoute], th: Thresholds | None
         baseline = float(np.percentile(moving, 75)) if len(moving) >= 4 else (
             float(moving.max()) if len(moving) else float("nan"))
 
-        detections.extend(detect_spoof_artifacts(g, th))
-        detections.extend(detect_corridor_gap(g, routes, index, th))
 
-        mask = index.mask(g["lon"].values, g["lat"].values)
-        smask = survey_index.mask(g["lon"].values, g["lat"].values)
+        for clean in split_on_impossible(g, th.impossible_kn):
+            if len(clean) < 2:
+                continue
+            _detect_segment(clean, routes, index, survey_index, th, baseline, detections)
 
-        # Drag is a property of a contiguous slow run, evaluated end to end. The
-        # corridor only decides whether that run is worth reporting. Scoring the
-        # corridor slice instead would bound distance by corridor width, which
-        # for a perpendicular crossing is twice the buffer no matter how far the
-        # anchor was actually dragged.
-        for srun in _slow_runs(g, th):
-            touched = set()
-            for lon_, lat_ in zip(srun["lon"].values, srun["lat"].values):
-                touched.update(index.hits(float(lon_), float(lat_)))
-            for ridx in sorted(touched):
-                inside = srun[index.distance_m(ridx, srun["lat"].values, srun["lon"].values) <= th.corridor_m]
-                in_m = float(track_stats(list(inside["ts"]), inside["lat"].values, inside["lon"].values,
-                                         inside["sog"].values, inside["cog"].values).distance_m) if len(inside) > 1 else 0.0
-                det = detect_anchor_drag(srun, routes[ridx], ridx, index, th, baseline, in_m)
-                if det:
-                    detections.append(det)
-
-        for ridx, route in enumerate(routes):
-            if mask[ridx].any():
-                for part in _segments(g[mask[ridx]], th.max_gap_for_continuity_s):
-                    if len(part) < 3:
-                        continue
-                    det = detect_loiter(part, route, ridx, index, th)
-                    if det:
-                        detections.append(det)
-
-            if smask[ridx].any():
-                for part in _segments(g[smask[ridx]], th.max_gap_for_continuity_s):
-                    if len(part) < 12:
-                        continue
-                    det = detect_survey_pattern(part, route, ridx, survey_index, th)
-                    if det:
-                        detections.append(det)
+    for d in detections:
+        q = quality.get(d.mmsi)
+        if q:
+            d.evidence["track_quality"] = q.to_dict()
+            d.confidence = CONFIDENCE_LOW
+            d.evidence["track_quality_note"] = (
+                "This MMSI's track contains legs no vessel could travel. Confidence is "
+                "held at LOW because the underlying positions are not trustworthy, "
+                "however clean the behavioural signal looks.")
 
     for d in detections:
         d.detection_id = hashlib.sha1(
             f"{d.kind}|{d.mmsi}|{d.cable_id}|{d.start_ts}|{d.end_ts}".encode()
         ).hexdigest()[:12]
 
+    if quality_out is not None:
+        quality_out.update({k: v.to_dict() for k, v in quality.items()})
+
     detections.sort(key=lambda d: (-_RANK[d.confidence], -d.score, d.start_ts))
-    log.info("emitted %d detections across %d routes", len(detections), len(routes))
+    log.info("emitted %d detections across %d routes (%d MMSIs flagged for track quality)",
+             len(detections), len(routes), len(quality))
     return detections
 
 
